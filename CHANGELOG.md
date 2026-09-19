@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.4
+
+- **Added `window.app` — foreground app identification with icon extraction.** Calls
+  `window.foreground` and enriches the result with `displayName` and an `iconPath`
+  (PNG, extracted from the process executable via `System.Drawing.Icon.ExtractAssociatedIcon`).
+  Lets the operator see *which application* is about to be touched before any mutate action.
+- **Approval reason now names the target application.** When `approval` is set to `mutating`
+  (or `always`), the dsh approval popup's reason text includes the foreground app name,
+  e.g. `ScreenAutomationHelper is about to perform "mouse.click" on DSH Desktop on your real screen:`.
+- **Documented the dsh popup limitation:** `dsh-client-ui-approval` only renders `toolName` +
+  `reason` strings, with no icon field; the icon is therefore surfaced via `window.app`'
+  `iconPath` result rather than inside the native approval dialog.
+
 ## 0.1.3
 
 - **`ui.click --verify` — closed-loop click verification.** After clicking, `ui.inspect --point` re-reads the element actually under the cursor and the action reports whether its role/name matches the `ui.find` expectation (`clicked+verified` vs `clicked+verify-mismatch`). This mirrors the CUA/Codex-style "click then confirm" safety check that catches mis-clicks on the wrong control. Validated against Notepad: clicking 文件 reported `verified: true` with `inspectedRole: menu_item, inspectedName: 文件`.

@@ -368,6 +368,94 @@ export interface OcrItem {
   readonly center: readonly number[];
 }
 
+/** Resolved foreground-application identity, including an extracted icon file. */
+export interface AppInfo {
+  /** Process name, e.g. "Notepad.exe". */
+  readonly process: string | null;
+  /** Window title text. */
+  readonly title: string | null;
+  /** Absolute path to the process executable. */
+  readonly exe: string | null;
+  /** Display name: process minus extension, or title if unknown. */
+  readonly displayName: string;
+  /** Path to a PNG icon extracted from the executable, or null if unavailable. */
+  readonly iconPath: string | null;
+}
+
+/**
+ * Resolve the foreground application and extract its icon to a PNG.
+ *
+ * Used so the model — and the human approving a mutate — can *see which app* is
+ * about to be operated, not just read a process name. The icon is pulled from the
+ * executable via Windows `System.Drawing.Icon.ExtractAssociatedIcon`; on non-Windows
+ * hosts (or when extraction fails) `iconPath` is null and the textual identity is
+ * still returned. The icon file lives under the system temp dir.
+ */
+export async function resolveForegroundApp(
+  cliPath: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<AppInfo> {
+  const fallback: AppInfo = {
+    process: null,
+    title: null,
+    exe: null,
+    displayName: 'unknown app',
+    iconPath: null,
+  }
+  const win = await runCli({
+    cliPath,
+    invocation: { path: ['window', 'foreground'] },
+    timeoutMs,
+    signal,
+  })
+  const j = win.ok ? (win.json as Record<string, unknown> | undefined) : undefined
+  if (!j) return fallback
+  const process = typeof j.process === 'string' ? j.process : null
+  const title = typeof j.title === 'string' ? j.title : null
+  const exe = typeof j.process_path === 'string' ? j.process_path : null
+  const displayName = (process ?? title ?? 'unknown app').replace(/\.exe$/i, '')
+  const iconPath = exe ? extractIcon(exe) : null
+  return { process, title, exe, displayName, iconPath }
+}
+
+/** Extract an executable's associated icon to a temp PNG; null on any failure. */
+function extractIcon(exe: string): string | null {
+  if (process.platform !== 'win32') return null
+  const fs = require('node:fs') as typeof import('node:fs')
+  const os = require('node:os') as typeof import('node:os')
+  const path = require('node:path') as typeof import('node:path')
+  const { spawnSync } = require('node:child_process') as typeof import('node:child_process')
+  const out = path.join(
+    os.tmpdir(),
+    `dsh-screen-helper-icon-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`,
+  )
+  // Inline PowerShell; only Windows reaches here. Backtick-quote the exe path.
+  const ps = `
+Add-Type -AssemblyName System.Drawing
+try {
+  $ico = [System.Drawing.Icon]::ExtractAssociatedIcon('${exe.replace(/'/g, "''")}')
+  if ($ico) {
+    $bmp = $ico.ToBitmap()
+    $bmp.Save('${out.replace(/'/g, "''")}', [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Dispose(); $ico.Dispose()
+    Write-Output 'OK'
+  } else { Write-Output 'NOICON' }
+} catch { Write-Output "ERR:$_" }
+`
+  try {
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+      timeout: 15_000,
+      windowsHide: true,
+    })
+    const outText = (r.stdout?.toString() ?? '').trim()
+    if (outText === 'OK' && fs.existsSync(out)) return out
+    return null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Find precise word-level boxes for `query` within OCR `items`.
  *

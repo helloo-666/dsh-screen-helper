@@ -28,6 +28,7 @@ import {
   findExact,
   isDestructive,
   resolveCliPath,
+  resolveForegroundApp,
   runCli,
   stringifyForModel,
   type RiskTier,
@@ -110,6 +111,7 @@ const ACTIONS: Record<RiskTier, readonly string[]> = {
     'dialog.inspect',
     'clipboard.read',
     'window',
+    'window.app',
   ],
   mutate: [
     'mouse.move',
@@ -163,11 +165,11 @@ function actionToPath(action: string): string[] {
  */
 const COMPUTED_ACTIONS: Record<string, string[]> = {
   find_exact: ['screen', 'recognize'],
-  // Note: `ui.click` is intentionally NOT here. It is handled by runUiClick
-  // (which composes ui.find + find_exact + mouse.click internally) and must
-  // classify as `mutate` — leaving it computed-to `ui.find` would wrongly make
-  // a real mouse click an observe-tier, no-approval call. resolvePath leaves it
-  // as ['ui','click'], which falls through classify's fail-safe to mutate.
+  // `window.app` resolves the foreground application (window foreground) and
+  // extracts its icon to a PNG so the operator can see which app a pending
+  // action will touch. Note: `ui.click` is intentionally NOT here — it must
+  // classify as mutate (see runUiClick), not as observe-tier ui.find.
+  'window.app': ['window', 'foreground'],
 }
 
 /** Resolve an action to the CLI path it ultimately invokes (computed or direct). */
@@ -290,7 +292,7 @@ export function apply(ctx: Context, config: Config): void {
 
         // 2. Approval gate. Under `always` this covers read-only calls too.
         if (needsApproval(config.approval, tier)) {
-          const decision = await requestApproval(ctx, exec, args.action, argv)
+          const decision = await requestApproval(ctx, exec, cliPath, config, tier, args.action, argv)
           if (decision !== GRANT) {
             return {
               action: args.action,
@@ -314,6 +316,9 @@ export function apply(ctx: Context, config: Config): void {
         }
         if (args.action === 'ui.click') {
           return runUiClick({ cliPath, argv, config, tier, exec, action: args.action })
+        }
+        if (args.action === 'window.app') {
+          return runWindowApp({ cliPath, config, tier, exec, action: args.action })
         }
 
         const outcome = await runCli({
@@ -369,20 +374,35 @@ const GRANT = 'allowed-once'
 async function requestApproval(
   ctx: Context,
   exec: { agent?: unknown; callId?: unknown; signal: AbortSignal },
+  cliPath: string,
+  config: Config,
+  tier: RiskTier,
   action: string,
   argv: readonly string[],
 ): Promise<string> {
   const approval = (ctx as unknown as { approval?: { request?: Function } }).approval
   if (approval?.request === undefined) return 'unavailable'
 
+  // For actions that touch the screen, name the foreground app in the reason so
+  // the human approving sees *which application* is about to be operated — not
+  // just the tool action. The dsh popup renders `reason` text only (no icon
+  // field), so the icon itself is surfaced separately via `window.app`.
+  let appNote = ''
+  if (tier === 'mutate') {
+    const app = await resolveForegroundApp(cliPath, config.timeoutMs, exec.signal)
+    if (app.process || app.title) {
+      appNote = ` on ${app.displayName}`
+    }
+  }
   const preview = argv.length === 0 ? '(no arguments)' : argv.join(' ')
+  const reason = `ScreenAutomationHelper is about to perform "${action}"${appNote} on your real screen: ${preview}`
   try {
     const outcome = await approval.request({
       agent: exec.agent,
       toolName: 'screen_automation',
       callId: exec.callId,
       signal: exec.signal,
-      reason: `ScreenAutomationHelper is about to perform "${action}" on your real screen: ${preview}`,
+      reason,
     })
     return typeof outcome === 'string' ? outcome : 'unavailable'
   } catch {
@@ -692,6 +712,46 @@ async function runUiClick(params: {
   }
 }
 
+/**
+ * `window.app` action: identify the foreground application and extract its icon.
+ *
+ * Lets the operator (and the model) *see which app* a screen operation will
+ * touch — a visual aid for the approval step. dsh's approval popup renders only a
+ * text `reason`, so the icon is returned here as a PNG path the GUI can display,
+ * while the textual identity (name/title/exe) goes in the normal result. Returns
+ * the raw `window foreground` JSON plus `displayName` and `iconPath`.
+ */
+async function runWindowApp(params: {
+  cliPath: string
+  config: Config
+  tier: RiskTier
+  exec: { signal: AbortSignal }
+  action: string
+}): Promise<ToolValue> {
+  const app = await resolveForegroundApp(params.cliPath, params.config.timeoutMs, params.exec.signal)
+  const outcome = await runCli({
+    cliPath: params.cliPath,
+    invocation: { path: ['window', 'foreground'], args: [] },
+    timeoutMs: params.config.timeoutMs,
+    signal: params.exec.signal,
+  })
+  const base = outcome.ok ? (outcome.json as Record<string, unknown> | undefined) : undefined
+  return {
+    action: params.action,
+    tier: params.tier,
+    executed: true,
+    blockedReason: null,
+    exitCode: outcome.ok ? 0 : outcome.exitCode,
+    data: {
+      ...(base ?? {}),
+      displayName: app.displayName,
+      iconPath: app.iconPath,
+    } as unknown as JsonValue,
+    text: outcome.ok ? null : outcome.message,
+    stderr: outcome.ok ? null : outcome.stderr,
+  }
+}
+
 /** Pull `--target` from argv if present, else undefined. */
 function pickTarget(argv: readonly string[]): string | undefined {
   const i = argv.indexOf('--target')
@@ -719,6 +779,7 @@ function buildDescription(config: Config): string {
     `MUTATE (moves mouse / types / changes state): ${list('mutate')}`,
     '',
     'Typical flow: screen.recognize or ui.tree to see the current state, then either screen.find (line-level) or find_exact (precise token box) to get coordinates of a target, then mouse.click with --point "x,y".',
+    'Call window.app before a sequence of mutate actions to identify the foreground application and extract its icon (displayName + iconPath); this lets the operator see which app is about to be touched.',
     'find_exact is preferred for clicking a specific label or button: it returns the exact box of the matching token, not the whole line.',
     'ui.click is the semantic path: pass --name (and optionally --role) to confirm a control exists in the UI tree by identity, then it auto-resolves the on-screen pixel via OCR and clicks it. Add --verify to re-inspect the clicked point and confirm it landed on the expected control (the same closed-loop check CUA/Codex-style agents use to avoid clicking the wrong element).',
     'ui.tree / ui.find / ui.inspect read the accessibility (UIA) tree: identity and hierarchy, not pixel geometry. SAH does not expose element bounding boxes via ui.find, so ui.click resolves a pixel via OCR; ui.inspect --point does return the element bounds/name under a cursor, which --verify relies on.',

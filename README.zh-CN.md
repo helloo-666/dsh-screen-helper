@@ -202,7 +202,45 @@ UI 自动化 agent 主流有两种范式，本插件取了两者的组合，并�
 > 在 `ui.find` 里补上 `bounds_screen`（它其实在单次 `ui.inspect` 里已有），`ui.click` 可以跳过
 > OCR 这步，变成纯 AX 树定位——届时本插件的接口无需改动。
 
-## 开发
+## 应用识别：先看图标再操作
+
+在让模型控制某个软件之前，建议先调用一次 `window.app`：
+
+```bash
+screen_automation({
+  action: 'window.app',
+  args: []
+})
+# 返回示例：
+# {
+#   "process": "Notepad.exe",
+#   "title": "无标题 - Notepad",
+#   "process_path": "C:\\...\\Notepad.exe",
+#   "displayName": "Notepad",
+#   "iconPath": "C:\\Users\\...\\Temp\\dsh-screen-helper-icon-xxx.png"
+# }
+```
+
+`window.app` 会先调用 `window.foreground` 拿到当前前台应用，再用 Windows 的
+`System.Drawing.Icon.ExtractAssociatedIcon` 从可执行文件里抽出图标，保存成一张 PNG。
+这样你和模型都能**先看见要动的是哪个软件 + 它的图标**。
+
+### 弹窗询问
+
+把 `approval` 设成 `mutating` 或 `always` 后，任何会动鼠标 / 敲键盘 / 改状态的操作都会
+触发 dsh 的**原生审批弹窗**：
+
+```yaml
+approval: mutating   # 只询问会改变状态的动作（鼠标/键盘/剪贴板写入/工作流变更）
+# approval: always   # 包括只读查询也询问
+```
+
+弹窗里的原因会写明「`mouse.click` on **DSH Desktop**」——应用名已经自动从当前前台窗口解析出来，
+你在弹窗里能直接看到要操作的是哪个程序。
+
+> ⚠️ 图标显示的限制：dsh 的审批弹窗只能渲染文字 `reason`，**不支持附带图片**。所以图标不会
+> 出现在审批弹窗里；它通过 `window.app` 的结果（`iconPath`）返回，可以在聊天界面展示，
+> 作为操作前的可视化参考。这是 dsh 自身的 UI 契约决定的，不是插件不想放。
 
 ```bash
 pnpm install
