@@ -133,6 +133,7 @@ const ACTIONS: Record<RiskTier, readonly string[]> = {
     'task.drag',
     'task.scroll',
     'task.long-press',
+    'ui.click',
     'runs.pause',
     'runs.resume',
     'runs.stop',
@@ -162,6 +163,11 @@ function actionToPath(action: string): string[] {
  */
 const COMPUTED_ACTIONS: Record<string, string[]> = {
   find_exact: ['screen', 'recognize'],
+  // Note: `ui.click` is intentionally NOT here. It is handled by runUiClick
+  // (which composes ui.find + find_exact + mouse.click internally) and must
+  // classify as `mutate` — leaving it computed-to `ui.find` would wrongly make
+  // a real mouse click an observe-tier, no-approval call. resolvePath leaves it
+  // as ['ui','click'], which falls through classify's fail-safe to mutate.
 }
 
 /** Resolve an action to the CLI path it ultimately invokes (computed or direct). */
@@ -305,6 +311,9 @@ export function apply(ctx: Context, config: Config): void {
         //    precise token boxes. Runs here so the approval gate is honored.
         if (args.action === 'find_exact') {
           return runFindExact({ cliPath, argv, config, tier, exec, action: args.action })
+        }
+        if (args.action === 'ui.click') {
+          return runUiClick({ cliPath, argv, config, tier, exec, action: args.action })
         }
 
         const outcome = await runCli({
@@ -450,6 +459,168 @@ async function runFindExact(params: {
   }
 }
 
+/**
+ * `ui.click` action: click a control identified by its UI-tree identity.
+ *
+ * SAH's `ui.find` returns element role/name (a semantic handle) but not geometry,
+ * and there is no element-scoped click channel (`task.click` requires a pixel
+ * `--point`). So we (1) confirm the control exists by role/name, then (2) locate
+ * it on screen with word-level OCR (`find_exact`) and (3) click the resulting
+ * pixel box. The `ui.find` step is the identity check: it fails loudly when the
+ * named control is absent or ambiguous, instead of blindly trusting OCR.
+ *
+ * Args: forward `--name`, `--role`, `--match`, `--target`, `--limit`,
+ * `--max-depth`, `--max-nodes` to `ui.find`; the located text is then matched by
+ * `find_exact` using the same `--name` value. Pass `--button`/`--duration` to
+ * tune the click.
+ */
+async function runUiClick(params: {
+  cliPath: string
+  argv: readonly string[]
+  config: Config
+  tier: RiskTier
+  exec: { signal: AbortSignal }
+  action: string
+}): Promise<ToolValue> {
+  const argv = params.argv
+  const nameIdx = argv.indexOf('--name')
+  const name =
+    nameIdx >= 0 && nameIdx + 1 < argv.length ? (argv[nameIdx + 1] ?? '') : ''
+  const roleIdx = argv.indexOf('--role')
+  const role =
+    roleIdx >= 0 && roleIdx + 1 < argv.length ? (argv[roleIdx + 1] ?? '') : ''
+
+  // Step 1: confirm the control by UI-tree identity.
+  const findOutcome = await runCli({
+    cliPath: params.cliPath,
+    invocation: { path: ['ui', 'find'], args: argv },
+    timeoutMs: params.config.timeoutMs,
+    signal: params.exec.signal,
+  })
+  const findJson = findOutcome.ok ? (findOutcome.json as Record<string, unknown> | undefined) : undefined
+  const status = typeof findJson?.status === 'string' ? findJson.status : 'not_found'
+  const count = typeof findJson?.count === 'number' ? findJson.count : 0
+
+  if (status !== 'matched' || count < 1) {
+    return {
+      action: params.action,
+      tier: params.tier,
+      executed: true,
+      blockedReason: null,
+      exitCode: findOutcome.ok ? 0 : findOutcome.exitCode,
+      data: {
+        step: 'ui.find',
+        status,
+        count,
+        error: status === 'ambiguous' ? 'multiple controls match; narrow with --role or --match' : 'control not found in the UI tree',
+      } as unknown as JsonValue,
+      text: null,
+      stderr: findOutcome.ok ? null : findOutcome.stderr,
+    }
+  }
+
+  // Step 2: locate on screen via word-level OCR, reusing find_exact's ranking.
+  const query = name || role
+  if (!query) {
+    return {
+      action: params.action,
+      tier: params.tier,
+      executed: true,
+      blockedReason: null,
+      exitCode: 0,
+      data: {
+        step: 'ui.find',
+        status,
+        count,
+        error: 'no --name or --role given; cannot resolve a pixel target without text to OCR',
+      } as unknown as JsonValue,
+      text: null,
+      stderr: null,
+    }
+  }
+  const recArgs = ['--target', (pickTarget(argv) ?? 'virtual-screen')]
+  const rec = await runCli({
+    cliPath: params.cliPath,
+    invocation: { path: ['screen', 'recognize'], args: recArgs },
+    timeoutMs: params.config.timeoutMs,
+    signal: params.exec.signal,
+  })
+  if (!rec.ok) {
+    return {
+      action: params.action,
+      tier: params.tier,
+      executed: true,
+      blockedReason: null,
+      exitCode: rec.exitCode,
+      data: { step: 'screen.recognize', error: 'OCR failed' } as unknown as JsonValue,
+      text: rec.message,
+      stderr: rec.stderr,
+    }
+  }
+  const items = (rec.json as { items?: unknown } | undefined)?.items
+  const ranked = findExact(
+    Array.isArray(items)
+      ? (items as Array<{ text: string; confidence: number; box: number[]; center: number[] }>)
+      : [],
+    query,
+  )
+  const target = ranked.matches[0]
+  if (!target) {
+    return {
+      action: params.action,
+      tier: params.tier,
+      executed: true,
+      blockedReason: null,
+      exitCode: 0,
+      data: {
+        step: 'find_exact',
+        status,
+        count,
+        error: `UI control "${query}" confirmed in tree, but no on-screen text matched it for clicking`,
+      } as unknown as JsonValue,
+      text: null,
+      stderr: null,
+    }
+  }
+
+  // Step 3: click the pixel box of the located token.
+  const center = target.center
+  const buttonIdx = argv.indexOf('--button')
+  const button =
+    buttonIdx >= 0 && buttonIdx + 1 < argv.length ? (argv[buttonIdx + 1] ?? 'left') : 'left'
+  const clickArgs = ['--point', `${center[0]},${center[1]}`, '--button', button]
+  const click = await runCli({
+    cliPath: params.cliPath,
+    invocation: { path: ['mouse', 'click'], args: clickArgs },
+    timeoutMs: params.config.timeoutMs,
+    signal: params.exec.signal,
+  })
+  return {
+    action: params.action,
+    tier: params.tier,
+    executed: true,
+    blockedReason: null,
+    exitCode: click.ok ? 0 : click.exitCode,
+    data: {
+      step: 'clicked',
+      uiStatus: status,
+      uiCount: count,
+      locatedText: target.text,
+      box: target.box,
+      center,
+      button,
+    } as unknown as JsonValue,
+    text: click.ok ? null : click.message,
+    stderr: click.ok ? null : click.stderr,
+  }
+}
+
+/** Pull `--target` from argv if present, else undefined. */
+function pickTarget(argv: readonly string[]): string | undefined {
+  const i = argv.indexOf('--target')
+  return i >= 0 && i + 1 < argv.length ? (argv[i + 1] as string | undefined) : undefined
+}
+
 /** Compose the model-facing manual from the action catalogue. */
 function buildDescription(config: Config): string {
   const list = (tier: RiskTier): string => ACTIONS[tier].join(', ')
@@ -472,6 +643,8 @@ function buildDescription(config: Config): string {
     '',
     'Typical flow: screen.recognize or ui.tree to see the current state, then either screen.find (line-level) or find_exact (precise token box) to get coordinates of a target, then mouse.click with --point "x,y".',
     'find_exact is preferred for clicking a specific label or button: it returns the exact box of the matching token, not the whole line.',
+    'ui.click is the semantic path: pass --name (and optionally --role) to confirm a control exists in the UI tree by identity, then it auto-resolves the on-screen pixel via OCR and clicks it. Use ui.click when you know the control\'s accessible name but not its coordinates; fall back to mouse.click with explicit --point when you already have pixels.',
+    'ui.tree / ui.find / ui.inspect read the accessibility (UIA) tree: identity and hierarchy, not pixel geometry. SAH does not expose element bounding boxes, so ui.click still clicks by resolved pixel, not by element handle.',
     'Coordinates are absolute screen pixels; use screen.monitors to check the display layout first.',
     '',
     policy,

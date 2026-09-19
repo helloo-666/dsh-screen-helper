@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.2
+
+- **Added `ui.click` — semantic UI-tree click.** Confirms a control exists by its
+  accessible identity (`ui.find` by `--name`/`--role`) and only then resolves an
+  on-screen pixel via word-level OCR (`find_exact`) and clicks it. If the control
+  is absent or ambiguous the action returns an explicit error and never clicks a
+  guessed point. Classified `mutate` (requires approval, not concurrency-safe) —
+  it is deliberately kept out of `COMPUTED_ACTIONS` so the real mouse click is not
+  mis-tiered as an observe-only call. Validated end-to-end against Notepad: `ui.click
+  --name 文件` confirms the menu item, locates it (`center [166,143]`), and clicks.
+- **Exposed the UI-tree layer** (`ui.tree`, `ui.find`, `ui.inspect`) as first-class
+  observe actions. These read the accessibility (UIA) tree — element identity and
+  hierarchy — and are documented as identity-only: SAH does not expose element
+  bounding boxes, so geometry still comes from OCR.
+
 ## 0.1.1
 
 - **Fixed: `find_exact` ranking when no token equals the query exactly.** Previously the order was

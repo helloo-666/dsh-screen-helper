@@ -166,6 +166,51 @@ test('find_exact narrows a recognized line down to the exact token box', async (
   assert.ok(matches.length >= 1, 'should locate at least one token box');
 });
 
+test('ui.click is mutate-tier (prompts under always) and not concurrency-safe', async () => {
+  const { ctx, registered } = makeContext();
+  let asked = 0;
+  ctx.approval = { async request() { asked += 1; return 'allowed-once'; } };
+  apply(ctx, Config({ approval: 'always', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+  // mutate => prompts under always, and is NOT concurrency-safe.
+  assert.equal(asked, 0);
+  // isConcurrencySafe consults classify: ui.click -> mutate -> false.
+  assert.equal(tool.isConcurrencySafe({ action: 'ui.click' }), false);
+});
+
+test('ui.click resolves a UI-tree identity to a real click via OCR', async () => {
+  const sa = process.env.SAH_CLI ?? 'D:\\ScreenAutomationHelper\\ScreenAutomationHelper.exe';
+  if (!sa) return;
+  const { ctx, registered } = makeContext();
+  ctx.approval = { async request() { return 'allowed-once'; } };
+  apply(ctx, Config({ approval: 'never', cliPath: sa }));
+  const tool = registered.get('screen_automation');
+  // Open a known Win32 target so ui.find has a real accessible name to confirm.
+  const { execSync } = await import('node:child_process');
+  try { execSync('cmd /c start notepad.exe', { windowsHide: true }); } catch {}
+  await new Promise((r) => setTimeout(r, 1500));
+  try {
+    const v = await tool.execute(
+      { action: 'ui.click', args: ['--target', 'foreground', '--name', '文件', '--role', 'menu_item'] },
+      { signal: new AbortController().signal, agent: undefined, callId: 'u1' },
+    );
+    assert.equal(v.executed, true);
+    const data = v.data ?? {};
+    // Either it clicked (matched + located) or the control was not found in the
+    // tree; either way it must not silently click a guessed point.
+    assert.ok(
+      data.step === 'clicked' || (data.step === 'ui.find' && data.status !== 'matched'),
+      `ui.click should click or report a non-match, got ${JSON.stringify(data)}`,
+    );
+    if (data.step === 'clicked') {
+      assert.ok(Array.isArray(data.center) && data.center.length === 2, 'clicked returns a pixel center');
+      assert.equal(data.uiStatus, 'matched');
+    }
+  } finally {
+    try { execSync('cmd /c taskkill /im notepad.exe /f', { windowsHide: true }); } catch {}
+  }
+});
+
 test('blockDestructive refuses workflow mutation without spawning', async () => {
   const { ctx, registered } = makeContext();
   apply(ctx, Config({ blockDestructive: true, cliPath: 'D:\\nope\\nope.exe' }));

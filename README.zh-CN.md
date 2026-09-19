@@ -25,6 +25,9 @@
 > **`find_exact` 与 `screen.find` 的区别**：`screen.find` 返回的是**包含命中词的整行**框，点击会落到行中间；
 > `find_exact` 复用 `screen.recognize` 的**单词级** OCR，返回**精确命中词**的框。要点按钮、点标签时优先用 `find_exact`。
 
+> **UI 树点击（`ui.click`）**：先用 `ui.find` 按**无障碍身份**（role/name）确认控件存在，再自动用 `find_exact` 拿到屏幕上像素坐标并点击。比纯 OCR 稳——它先证明"这个控件是真的"，不会因 OCR 误识别点到同名文字。控件不存在时**明确报错、绝不乱点**。
+> 注意：SAH 的 UI 树（`ui.tree`/`ui.find`）只暴露**身份与层级**，不暴露元素几何坐标，所以 `ui.click` 仍按解析出的像素点击，而非按元素句柄。对 Electron 类应用（如 DSH 桌面本身）UI 树节点可能不暴露名字，此时退回 `find_exact` 或显式 `mouse.click --point`。
+
 
 小助手是**独立的第三方产品**，不随本插件分发。如果 `health` 返回 `SPAWN_FAILED`，
 说明小助手没装或 `cliPath` 配错了。
