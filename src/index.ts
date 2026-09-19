@@ -1,0 +1,480 @@
+/**
+ * dsh-screen-helper — a DeepSeek Harness bundle that drives the
+ * ScreenAutomationHelper CLI (屏幕自动化小助手) from the model.
+ *
+ * Design notes that matter:
+ *
+ *  - ONE tool, not forty. The CLI exposes ~42 capability families. Registering
+ *    one tool per subcommand would flood the model's tool list. Instead a single
+ *    `screen_automation` tool takes an `action` enum plus a free-form `args`
+ *    array, and its description carries the usage manual. This keeps the tool
+ *    namespace small while still reaching the whole CLI.
+ *
+ *  - Risk tiers are computed BEFORE execution (`classify`). Read-only and
+ *    screen-observation calls run directly; anything that moves the mouse,
+ *    types, or mutates workflows is `mutate` and can require approval.
+ *
+ *  - Approval is fail-closed by construction: `ctx.approval.request` resolves
+ *    'unavailable' when nobody answers, so an unattended session cannot
+ *    accidentally drive the screen.
+ */
+import type { Context } from '@deepseek-ai/cordis'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import z from '@deepseek-ai/schemastery'
+
+import {
+  classify,
+  findExact,
+  isDestructive,
+  resolveCliPath,
+  runCli,
+  stringifyForModel,
+  type RiskTier,
+} from './cli.js'
+
+export const name = 'screen-helper'
+export const inject = ['tools']
+
+/** Plugin configuration, validated and defaulted by Cordis via the schema. */
+/**
+ * How much of the surface requires user approval before running.
+ *
+ * - `always`   — every call, including read-only ones, asks first.
+ * - `mutating` — only actions that can move the mouse, type, or change state ask.
+ * - `never`    — nothing asks; the model runs everything.
+ */
+export type ApprovalMode = 'always' | 'mutating' | 'never'
+
+export interface Config {
+  cliPath: string
+  timeoutMs: number
+  approval: ApprovalMode
+  blockDestructive: boolean
+}
+
+export const Config: z<Config> = z.object({
+  cliPath: z.string().default(''),
+  timeoutMs: z.number().default(60_000),
+  approval: z
+    .union([z.const('always'), z.const('mutating'), z.const('never')])
+    .default('never'),
+  blockDestructive: z.boolean().default(false),
+})
+
+/** Whether a tier must ask under the configured mode. */
+function needsApproval(mode: ApprovalMode, tier: RiskTier): boolean {
+  if (mode === 'always') return true
+  if (mode === 'mutating') return tier === 'mutate'
+  return false
+}
+
+/**
+ * Action catalogue: the model-facing vocabulary, grouped by tier. Kept as data
+ * so the description and the schema cannot drift apart.
+ */
+const ACTIONS: Record<RiskTier, readonly string[]> = {
+  read: [
+    'status',
+    'capabilities',
+    'health',
+    'connectors',
+    'components',
+    'runs.list',
+    'runs.pending-agent',
+    'latest',
+    'result',
+    'workflow.list',
+    'workflow.show',
+    'workflow.describe',
+    'workflow.validate',
+    'workflow.schema',
+    'locator.find',
+    'locator.wait',
+    'task.status',
+  ],
+  observe: [
+    'screen.capture',
+    'screen.recognize',
+    'screen.find',
+    'find_exact',
+    'screen.wait',
+    'screen.contours',
+    'screen.color-regions',
+    'screen.match',
+    'screen.monitors',
+    'screen.work-area',
+    'ui.tree',
+    'ui.find',
+    'ui.inspect',
+    'dialog.inspect',
+    'clipboard.read',
+    'window',
+  ],
+  mutate: [
+    'mouse.move',
+    'mouse.click',
+    'mouse.down',
+    'mouse.up',
+    'mouse.long-press',
+    'mouse.drag',
+    'mouse.scroll',
+    'keyboard.write',
+    'keyboard.hotkey',
+    'clipboard.write',
+    'task.begin',
+    'task.end',
+    'task.observe',
+    'task.click',
+    'task.write',
+    'task.hotkey',
+    'task.wait',
+    'task.find',
+    'task.drag',
+    'task.scroll',
+    'task.long-press',
+    'runs.pause',
+    'runs.resume',
+    'runs.stop',
+    'runs.pause-all',
+    'runs.resume-all',
+    'runs.stop-all',
+    'start-workflow',
+    'debug-next',
+    'overlay',
+    'webview',
+    'workflow.install',
+    'workflow.remove',
+    'workflow.inspect',
+  ],
+}
+
+/** Turn `mouse.click` into the CLI subcommand path `['mouse','click']`. */
+function actionToPath(action: string): string[] {
+  return action.split('.')
+}
+
+/**
+ * Actions that are computed in the plugin rather than passed straight to the
+ * CLI. `find_exact` reuses `screen.recognize`'s word-level OCR and narrows the
+ * result to the precise token boxes matching the query — something the CLI's
+ * own `screen.find` cannot do, because it returns the whole line box.
+ */
+const COMPUTED_ACTIONS: Record<string, string[]> = {
+  find_exact: ['screen', 'recognize'],
+}
+
+/** Resolve an action to the CLI path it ultimately invokes (computed or direct). */
+function resolvePath(action: string): string[] {
+  return COMPUTED_ACTIONS[action] ?? actionToPath(action)
+}
+
+/**
+ * Shape returned by the tool body; declared again in `output.schema`.
+ *
+ * The index signature is required, not decorative: `output.schema` is an open
+ * object, so `defineTool` infers `Record<string, JsonValue>` as the canonical
+ * value type, and every member — including absent ones — must be assignable to
+ * `JsonValue`. Optional data is therefore modeled as `null` rather than an
+ * omitted key, which keeps the type total and the rendered output explicit.
+ */
+interface ToolValue {
+  action: string
+  tier: RiskTier
+  /** True when the call actually reached the CLI. */
+  executed: boolean
+  /** Why a call was not executed; `null` when it ran. */
+  blockedReason: string | null
+  exitCode: number | null
+  /** Parsed JSON when the CLI printed JSON, else `null`. */
+  data: JsonValue | null
+  /** Raw text when the CLI printed something other than JSON, else `null`. */
+  text: string | null
+  stderr: string | null
+  [key: string]: JsonValue
+}
+
+export function apply(ctx: Context, config: Config): void {
+  const cliPath = resolveCliPath(config.cliPath)
+
+  ctx.tools.register(
+    defineTool({
+      name: 'screen_automation',
+      description: buildDescription(config),
+
+      parameters: {
+        action: {
+          type: 'string',
+          required: true,
+          description:
+            'Which helper operation to run, e.g. "screen.recognize" or "mouse.click". See the action list in the description.',
+        },
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'CLI flags for the chosen action, each as its own element, e.g. ["--point","100,200","--button","left"]. Never pass a whole shell command here.',
+        },
+      },
+
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+        },
+        render: (_args, value) => {
+          const v = value as unknown as ToolValue
+          const lines: string[] = []
+          lines.push(`action: ${v.action} (${v.tier})`)
+
+          if (!v.executed) {
+            lines.push(`NOT EXECUTED: ${v.blockedReason ?? 'blocked by policy'}`)
+            return [{ type: 'text', text: lines.join('\n') }]
+          }
+
+          lines.push(`exit code: ${v.exitCode}`)
+          if (v.data !== null && v.data !== undefined) {
+            lines.push('--- result (JSON) ---')
+            lines.push(stringifyForModel(v.data))
+          } else if (v.text !== null && v.text !== undefined && v.text !== '') {
+            lines.push('--- result ---')
+            lines.push(v.text)
+          }
+          if (v.stderr !== null && v.stderr !== undefined && v.stderr !== '') {
+            lines.push('--- stderr ---')
+            lines.push(v.stderr)
+          }
+          return [{ type: 'text', text: lines.join('\n') }]
+        },
+        presentationMeta: (_args, value) => {
+          const v = value as unknown as ToolValue
+          return {
+            action: v.action,
+            tier: v.tier,
+            executed: v.executed,
+          }
+        },
+      },
+
+      timeoutMs: config.timeoutMs + 5_000,
+
+      // Screen input synthesis is inherently serial: two concurrent clicks race
+      // for one physical cursor. Only non-mutating calls may run in parallel.
+      isConcurrencySafe: (args) => classify(resolvePath(args.action)) !== 'mutate',
+
+      async execute(args, exec): Promise<ToolValue> {
+        const path = resolvePath(args.action)
+        const tier = classify(path)
+        const argv = args.args ?? []
+
+        // 1. Hard block for destructive families, if the deployment enabled it.
+        if (config.blockDestructive && isDestructive(path)) {
+          return {
+            action: args.action,
+            tier,
+            executed: false,
+            blockedReason:
+              'this deployment disables workflow mutation and clipboard writes (blockDestructive: true)',
+            exitCode: null,
+            data: null,
+            text: null,
+            stderr: null,
+          }
+        }
+
+        // 2. Approval gate. Under `always` this covers read-only calls too.
+        if (needsApproval(config.approval, tier)) {
+          const decision = await requestApproval(ctx, exec, args.action, argv)
+          if (decision !== GRANT) {
+            return {
+              action: args.action,
+              tier,
+              executed: false,
+              blockedReason: `the user did not approve this action (${decision})`,
+              exitCode: null,
+              data: null,
+              text: null,
+              stderr: null,
+            }
+          }
+        }
+
+        // 3. Run it.
+        // 3. Computed actions: `find_exact` runs screen.recognize (already
+        //    approved above as observe-tier) and narrows the word-level OCR to
+        //    precise token boxes. Runs here so the approval gate is honored.
+        if (args.action === 'find_exact') {
+          return runFindExact({ cliPath, argv, config, tier, exec, action: args.action })
+        }
+
+        const outcome = await runCli({
+          cliPath,
+          invocation: { path, args: argv },
+          timeoutMs: config.timeoutMs,
+          signal: exec.signal,
+        })
+
+        if (!outcome.ok) {
+          return {
+            action: args.action,
+            tier,
+            executed: true,
+            blockedReason: null,
+            exitCode: outcome.exitCode,
+            data: null,
+            text: outcome.message,
+            stderr: outcome.stderr,
+          }
+        }
+
+        return {
+          action: args.action,
+          tier,
+          executed: true,
+          blockedReason: null,
+          exitCode: 0,
+          data: outcome.json ?? null,
+          text: outcome.json === undefined ? outcome.stdout : null,
+          stderr: null,
+        }
+      },
+    }),
+  )
+}
+
+/**
+ * The only approval outcome that grants permission. Every other value in dsh's
+ * closed vocabulary (`'rejected'`, `'cancelled'`, `'unavailable'`) denies, and
+ * so does any rogue value a third-party answerer might return.
+ */
+const GRANT = 'allowed-once'
+
+/**
+ * Ask the user, fail-closed, and normalize every non-grant outcome to a refusal.
+ *
+ * `unavailable` covers "no answerer composed", "the answerer threw", and "a rogue
+ * return value" — all of which must deny. The comparison is against the allow
+ * token rather than a list of denial tokens so that an unrecognized outcome
+ * denies too.
+ */
+async function requestApproval(
+  ctx: Context,
+  exec: { agent?: unknown; callId?: unknown; signal: AbortSignal },
+  action: string,
+  argv: readonly string[],
+): Promise<string> {
+  const approval = (ctx as unknown as { approval?: { request?: Function } }).approval
+  if (approval?.request === undefined) return 'unavailable'
+
+  const preview = argv.length === 0 ? '(no arguments)' : argv.join(' ')
+  try {
+    const outcome = await approval.request({
+      agent: exec.agent,
+      toolName: 'screen_automation',
+      callId: exec.callId,
+      signal: exec.signal,
+      reason: `ScreenAutomationHelper is about to perform "${action}" on your real screen: ${preview}`,
+    })
+    return typeof outcome === 'string' ? outcome : 'unavailable'
+  } catch {
+    // A throwing asker must not become an allow.
+    return 'unavailable'
+  }
+}
+
+/**
+ * `find_exact` action: precise word-level text location.
+ *
+ * `screen.find` returns the box of the whole *line* containing a hit, which is
+ * too coarse to click a small control. We instead run `screen.recognize` (which
+ * emits one box per token) and filter its `items` for tokens containing the
+ * query, returning their exact boxes. The result is derived from the OCR items,
+ * so this is an `observe`-tier action that still requires approval under
+ * `always`. Pass `--text QUERY` and optionally `--region X,Y,W,H`.
+ */
+async function runFindExact(params: {
+  cliPath: string
+  argv: readonly string[]
+  config: Config
+  tier: RiskTier
+  exec: { signal: AbortSignal }
+  action: string
+}): Promise<ToolValue> {
+  // Derive the query from `--text QUERY`. `screen.recognize` has no `--text`
+  // flag of its own, so strip both `--text` and `--text-only` before invoking
+  // it; only region/target flags are forwarded. The query is used purely to
+  // filter the recognized items.
+  const argv = params.argv.filter((a) => a !== '--text-only')
+  const ti = argv.indexOf('--text')
+  const query = ti >= 0 && ti + 1 < argv.length ? (argv[ti + 1] ?? '') : ''
+  const recArgs = ti >= 0
+    ? [...argv.slice(0, ti), ...argv.slice(ti + 2)]
+    : argv
+
+  const outcome = await runCli({
+    cliPath: params.cliPath,
+    invocation: { path: ['screen', 'recognize'], args: recArgs },
+    timeoutMs: params.config.timeoutMs,
+    signal: params.exec.signal,
+  })
+
+  if (!outcome.ok) {
+    return {
+      action: params.action,
+      tier: params.tier,
+      executed: true,
+      blockedReason: null,
+      exitCode: outcome.exitCode,
+      data: null,
+      text: outcome.message,
+      stderr: outcome.stderr,
+    }
+  }
+
+  const items = (outcome.json as { items?: unknown } | undefined)?.items
+  const result = findExact(
+    Array.isArray(items)
+      ? (items as Array<{ text: string; confidence: number; box: number[]; center: number[] }>)
+      : [],
+    query,
+  )
+  return {
+    action: params.action,
+    tier: params.tier,
+    executed: true,
+    blockedReason: null,
+    exitCode: 0,
+    data: result as unknown as JsonValue,
+    text: null,
+    stderr: null,
+  }
+}
+
+/** Compose the model-facing manual from the action catalogue. */
+function buildDescription(config: Config): string {
+  const list = (tier: RiskTier): string => ACTIONS[tier].join(', ')
+  const policy = {
+    always:
+      'Every call — including read-only ones — requires the user to approve it in the UI before the helper runs. A call the user does not approve returns without executing.',
+    mutating:
+      'Actions that move the mouse, type, or change state require user approval before running; read-only actions run without asking.',
+    never: 'This deployment runs every action without asking (approval: never).',
+  }[config.approval]
+
+  return [
+    'Control the local "屏幕自动化小助手" (ScreenAutomationHelper) to see and operate the Windows desktop: screenshot, OCR text recognition, locate on-screen text or images, read the UI element tree, and move the mouse / type / use the clipboard.',
+    '',
+    'Pass `action` plus a `args` array of CLI flags (one flag per element). This tool never runs a shell: each element is passed as a literal argument.',
+    '',
+    `READ (safe, no side effects): ${list('read')}`,
+    `OBSERVE (captures screen content): ${list('observe')}`,
+    `MUTATE (moves mouse / types / changes state): ${list('mutate')}`,
+    '',
+    'Typical flow: screen.recognize or ui.tree to see the current state, then either screen.find (line-level) or find_exact (precise token box) to get coordinates of a target, then mouse.click with --point "x,y".',
+    'find_exact is preferred for clicking a specific label or button: it returns the exact box of the matching token, not the whole line.',
+    'Coordinates are absolute screen pixels; use screen.monitors to check the display layout first.',
+    '',
+    policy,
+    'The helper must be installed locally; if calls fail, run action "health" to diagnose.',
+  ].join('\n')
+}

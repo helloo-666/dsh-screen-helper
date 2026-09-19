@@ -1,0 +1,34 @@
+# dsh-screen-helper bundle patch for DeepSeek Harness (dsh).
+#
+# This file is the bundle layer of the plugin. `package.json` points here via
+# `dsh.bundle.patch`; `dsh plugin --profile <name> add <this package>` folds it
+# into the profile composition, and dsh imports the module named by each row
+# and mounts it as a Cordis plugin.
+#
+# Patch semantics (dsh convention) are exactly two operations:
+#   - a top-level `- insert:` appends rows to the composition
+#     (each row is id + name + optional config);
+#   - a top-level `- id: xxx` finds an existing row by id and REPLACES its
+#     config WHOLESALE — it is not a deep merge, so every key you want to keep
+#     must be rewritten here.
+#
+# The `name` below MUST stay identical to package.json `name`: dsh resolves the
+# row by that specifier through the profile's node_modules.
+- insert:
+    - id: screen-helper
+      name: dsh-screen-helper
+      config:
+        # Absolute path to the ScreenAutomationHelper executable. Empty means
+        # "resolve from PATH" (the installer does not always add it, so setting
+        # this explicitly is the reliable option).
+        cliPath: ''
+        # Default timeout for one CLI invocation, in milliseconds.
+        timeoutMs: 60000
+        # Approval policy for screen-mutating operations:
+        #   'mutating' — every mouse/keyboard/clipboard-write/workflow-mutation
+        #                call asks the user first (recommended for shared installs)
+        #   'never'    — never ask; every operation runs immediately
+        approval: never
+        # Hard disable for the most destructive families. When true the tool
+        # refuses these subcommands outright, regardless of approval.
+        blockDestructive: false
