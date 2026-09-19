@@ -472,7 +472,10 @@ async function runFindExact(params: {
  * Args: forward `--name`, `--role`, `--match`, `--target`, `--limit`,
  * `--max-depth`, `--max-nodes` to `ui.find`; the located text is then matched by
  * `find_exact` using the same `--name` value. Pass `--button`/`--duration` to
- * tune the click.
+ * tune the click. Pass `--verify` to close the loop: after clicking, `ui.inspect`
+ * re-reads the element actually under the cursor and the action reports whether
+ * its role/name matches the `ui.find` expectation (catches mis-clicks on the
+ * wrong control).
  */
 async function runUiClick(params: {
   cliPath: string
@@ -490,13 +493,33 @@ async function runUiClick(params: {
   const role =
     roleIdx >= 0 && roleIdx + 1 < argv.length ? (argv[roleIdx + 1] ?? '') : ''
 
-  // Step 1: confirm the control by UI-tree identity.
-  const findOutcome = await runCli({
+  // Step 1: confirm the control by UI-tree identity. A --role constraint can
+  // miss a control that is present but not currently exposed under that exact
+  // role (UIA visibility flakiness), so retry once without the role filter.
+  // ui.click-only flags (--verify/--button) are stripped before reaching ui.find.
+  const uiFindArgs = argv.filter((a) => a !== '--verify' && a !== '--button')
+  let findOutcome = await runCli({
     cliPath: params.cliPath,
-    invocation: { path: ['ui', 'find'], args: argv },
+    invocation: { path: ['ui', 'find'], args: uiFindArgs },
     timeoutMs: params.config.timeoutMs,
     signal: params.exec.signal,
   })
+  if (!findOutcome.ok || (findOutcome.json as Record<string, unknown> | undefined)?.status !== 'matched') {
+    // Drop `--role` (and its following value), keep everything else.
+    const cleaned: string[] = []
+    for (let i = 0; i < uiFindArgs.length; i++) {
+      if (uiFindArgs[i] === '--role') { i++; continue }
+      cleaned.push(uiFindArgs[i] as string)
+    }
+    if (cleaned.length !== uiFindArgs.length) {
+      findOutcome = await runCli({
+        cliPath: params.cliPath,
+        invocation: { path: ['ui', 'find'], args: cleaned },
+        timeoutMs: params.config.timeoutMs,
+        signal: params.exec.signal,
+      })
+    }
+  }
   const findJson = findOutcome.ok ? (findOutcome.json as Record<string, unknown> | undefined) : undefined
   const status = typeof findJson?.status === 'string' ? findJson.status : 'not_found'
   const count = typeof findJson?.count === 'number' ? findJson.count : 0
@@ -595,6 +618,55 @@ async function runUiClick(params: {
     timeoutMs: params.config.timeoutMs,
     signal: params.exec.signal,
   })
+  const base = {
+    uiStatus: status,
+    uiCount: count,
+    locatedText: target.text,
+    box: target.box,
+    center,
+    button,
+  }
+
+  // Step 4 (optional): verify the click landed on the intended control.
+  // ui.inspect at the clicked point returns the element actually under the
+  // cursor — its role/name — which we compare against the ui.find expectation.
+  // This closes the loop Codex/CUA-style agents use: OCR gives a pixel, but the
+  // accessibility tree confirms the pixel maps to the right control, catching
+  // the "right button, wrong screen" failure where a click lands mid-animation
+  // or on an overlapping element.
+  const verify = argv.includes('--verify')
+  if (!verify) {
+    return {
+      action: params.action,
+      tier: params.tier,
+      executed: true,
+      blockedReason: null,
+      exitCode: click.ok ? 0 : click.exitCode,
+      data: { step: 'clicked', ...base } as unknown as JsonValue,
+      text: click.ok ? null : click.message,
+      stderr: click.ok ? null : click.stderr,
+    }
+  }
+
+  const target_ = pickTarget(argv) ?? 'virtual-screen'
+  const inspect = await runCli({
+    cliPath: params.cliPath,
+    invocation: {
+      path: ['ui', 'inspect'],
+      args: ['--target', target_, '--point', `${center[0]},${center[1]}`],
+    },
+    timeoutMs: params.config.timeoutMs,
+    signal: params.exec.signal,
+  })
+  const el = (inspect.ok ? (inspect.json as Record<string, unknown> | undefined)?.element : undefined) as
+    | { role?: string; name?: string }
+    | undefined
+  const landedRole = el?.role ?? ''
+  const landedName = el?.name ?? ''
+  const roleMatch = role ? landedRole.toLowerCase() === role.toLowerCase() : true
+  const nameMatch = name ? landedName.includes(name) || name.includes(landedName) : true
+  const verified = roleMatch && nameMatch && landedRole !== ''
+
   return {
     action: params.action,
     tier: params.tier,
@@ -602,16 +674,21 @@ async function runUiClick(params: {
     blockedReason: null,
     exitCode: click.ok ? 0 : click.exitCode,
     data: {
-      step: 'clicked',
-      uiStatus: status,
-      uiCount: count,
-      locatedText: target.text,
-      box: target.box,
-      center,
-      button,
+      step: verified ? 'clicked+verified' : 'clicked+verify-mismatch',
+      ...base,
+      verify: {
+        inspectedRole: landedRole,
+        inspectedName: landedName,
+        roleMatch,
+        nameMatch,
+        verified,
+        warning: verified
+          ? undefined
+          : `clicked point landed on role="${landedRole}" name="${landedName}", which does not match expected role="${role}" name="${name}"`,
+      },
     } as unknown as JsonValue,
     text: click.ok ? null : click.message,
-    stderr: click.ok ? null : click.stderr,
+    stderr: inspect.ok ? null : inspect.stderr,
   }
 }
 
@@ -643,8 +720,8 @@ function buildDescription(config: Config): string {
     '',
     'Typical flow: screen.recognize or ui.tree to see the current state, then either screen.find (line-level) or find_exact (precise token box) to get coordinates of a target, then mouse.click with --point "x,y".',
     'find_exact is preferred for clicking a specific label or button: it returns the exact box of the matching token, not the whole line.',
-    'ui.click is the semantic path: pass --name (and optionally --role) to confirm a control exists in the UI tree by identity, then it auto-resolves the on-screen pixel via OCR and clicks it. Use ui.click when you know the control\'s accessible name but not its coordinates; fall back to mouse.click with explicit --point when you already have pixels.',
-    'ui.tree / ui.find / ui.inspect read the accessibility (UIA) tree: identity and hierarchy, not pixel geometry. SAH does not expose element bounding boxes, so ui.click still clicks by resolved pixel, not by element handle.',
+    'ui.click is the semantic path: pass --name (and optionally --role) to confirm a control exists in the UI tree by identity, then it auto-resolves the on-screen pixel via OCR and clicks it. Add --verify to re-inspect the clicked point and confirm it landed on the expected control (the same closed-loop check CUA/Codex-style agents use to avoid clicking the wrong element).',
+    'ui.tree / ui.find / ui.inspect read the accessibility (UIA) tree: identity and hierarchy, not pixel geometry. SAH does not expose element bounding boxes via ui.find, so ui.click resolves a pixel via OCR; ui.inspect --point does return the element bounds/name under a cursor, which --verify relies on.',
     'Coordinates are absolute screen pixels; use screen.monitors to check the display layout first.',
     '',
     policy,

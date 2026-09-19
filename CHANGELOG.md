@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- **`ui.click --verify` — closed-loop click verification.** After clicking, `ui.inspect --point` re-reads the element actually under the cursor and the action reports whether its role/name matches the `ui.find` expectation (`clicked+verified` vs `clicked+verify-mismatch`). This mirrors the CUA/Codex-style "click then confirm" safety check that catches mis-clicks on the wrong control. Validated against Notepad: clicking 文件 reported `verified: true` with `inspectedRole: menu_item, inspectedName: 文件`.
+- **Robust `ui.click` identity resolution.** A `--role` constraint that misses a transiently-hidden control is now retried without the role filter; `ui.click`-only flags (`--verify`, `--button`) are stripped before they reach `ui.find` (they were previously leaking into the UI-tree query and causing false `not_found`).
+- **README design-tradeoffs section** documenting why `ui.click` composes AX-tree identity confirmation + OCR pixel resolution + reverse verification, referencing the OpenAI CUA / Codex Computer Use paradigm, and the SAH limitation that `ui.find` does not expose element geometry.
+
 ## 0.1.2
 
 - **Added `ui.click` — semantic UI-tree click.** Confirms a control exists by its
