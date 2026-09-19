@@ -27,13 +27,25 @@
 
 ## 安装
 
-```bash
-# 从打包产物安装
-dsh plugin --profile desktop add ./dsh-screen-helper-0.1.0.tgz
+> ⚠️ **平台前提：本插件只能在 Windows 上运行。** 它驱动的是
+> [屏幕自动化小助手 / ScreenAutomationHelper](https://github.com/) —— 一个 Windows 桌面自动化
+> 程序（GUI + OCR + 鼠标键盘模拟）。macOS / Linux 上没有这个 CLI，装了也用不了。下方命令也假定
+> 你已经在用 Windows 版的 DeepSeek Harness。
 
-# 或从本地源码 / git 仓库
-dsh plugin --profile desktop add ./dsh-screen-helper
-dsh plugin --profile desktop add github:<you>/dsh-screen-helper
+**方式一：从 GitHub Release 一键装（推荐）**
+
+```powershell
+# Windows PowerShell
+dsh plugin --profile desktop add https://github.com/helloo-666/dsh-screen-helper/releases/download/v0.1.0/dsh-screen-helper-0.1.0.tgz
+```
+
+**方式二：从本地源码 / git 仓库**
+
+```bash
+dsh plugin --profile desktop add ./dsh-screen-helper          # 本地目录
+dsh plugin --profile desktop add ./dsh-screen-helper-0.1.0.tgz # 本地打包产物
+git clone https://github.com/helloo-666/dsh-screen-helper.git
+dsh plugin --profile desktop add ./dsh-screen-helper          # clone 后
 ```
 
 装完**重启该 profile**。确认插件行已生效：
@@ -46,6 +58,21 @@ dsh --profile desktop --dump-config
 > `dsh plugin add` 会把插件声明的默认值 `cliPath: ''` 写进 profile。这个默认值会从 `PATH`
 > 里找 `ScreenAutomationHelper.exe`，而**小助手的安装程序不会把自己加进 `PATH`**——所以刚装完
 > 每一次调用都会失败，直到你在 profile 的 `cordis.patch.yml` 里写上绝对路径。
+
+### 自动安装脚本
+
+仓库里附带 `install.ps1`，一条命令完成「装插件 + 写入 cliPath + 选审批档」：
+
+```powershell
+# 默认 approval=always，cliPath 取 SAH 默认安装位置
+.\install.ps1
+
+# 或显式指定
+.\install.ps1 -CliPath 'D:\ScreenAutomationHelper\ScreenAutomationHelper.exe' -Approval mutating
+```
+
+脚本会：① 把 release tarball 下到临时目录并通过 `dsh plugin add` 安装；② 在 profile 的
+`cordis.patch.yml` 里补上 `cliPath` 与 `approval` 两项配置（已存在则跳过）。它不碰你其它插件。
 
 ## 配置
 

@@ -25,13 +25,26 @@ The helper is a separate third-party product and is **not** bundled here. If `he
 
 ## Install
 
-```bash
-# from a packed tarball
-dsh plugin --profile desktop add ./dsh-screen-helper-0.1.0.tgz
+> ⚠️ **Platform prerequisite: this plugin only runs on Windows.** It drives the
+> [ScreenAutomationHelper](https://github.com/) desktop automation CLI — a Windows
+> program (GUI + OCR + mouse/keyboard synthesis). There is no equivalent on
+> macOS or Linux, so the plugin is unusable there. The commands below also assume
+> you are running the Windows build of DeepSeek Harness.
 
-# or from a local checkout / git URL
+**Option A — one-liner from the GitHub Release (recommended)**
+
+```powershell
+# Windows PowerShell
+dsh plugin --profile desktop add https://github.com/helloo-666/dsh-screen-helper/releases/download/v0.1.0/dsh-screen-helper-0.1.0.tgz
+```
+
+**Option B — from a local checkout or git URL**
+
+```bash
+git clone https://github.com/helloo-666/dsh-screen-helper.git
 dsh plugin --profile desktop add ./dsh-screen-helper
-dsh plugin --profile desktop add github:<you>/dsh-screen-helper
+# or directly from a local tarball
+dsh plugin --profile desktop add ./dsh-screen-helper-0.1.0.tgz
 ```
 
 Then **restart the profile** (or rely on HMR if it is enabled). Verify the row landed:
@@ -39,6 +52,20 @@ Then **restart the profile** (or rely on HMR if it is enabled). Verify the row l
 ```bash
 dsh --profile desktop --dump-config | grep -A6 screen-helper
 ```
+
+### Automated install script
+
+The repo ships `install.ps1`, which installs the plugin and writes `cliPath` /
+`approval` into the profile's `cordis.patch.yml` in one step:
+
+```powershell
+.\install.ps1                                                  # approval=always, default SAH path
+.\install.ps1 -CliPath 'D:\ScreenAutomationHelper\ScreenAutomationHelper.exe' -Approval mutating
+```
+
+It downloads the release tarball to a temp dir, runs `dsh plugin add`, then adds
+the `cliPath` and `approval` config (skipping either if already present). It does
+not touch your other plugins.
 
 ## Configuration
 
