@@ -374,9 +374,15 @@ export interface OcrItem {
  * `screen.find` returns the *line* containing a hit, which is too coarse to
  * click a small control. `screen.recognize` returns one box per recognized
  * token, so a substring match against those tokens yields a box that actually
- * covers the target text. Exact-token matches sort first, then by confidence,
- * so a token equal to the query wins over a longer token that merely contains
- * it (e.g. "文件" wins over "发消息或创建任务，@文件或对话").
+ * covers the target text.
+ *
+ * Ranking: exact-token matches first, then **shortest containing token**
+ * (a UI control label is the minimal text that contains the query, while a
+ * chat log line merely happens to contain it), then by confidence. The
+ * shortest-first rule matters when no token equals the query exactly — e.g.
+ * the query "新会话" against a sidebar button rendered as "④新会话" (icon
+ * prefix, conf 0.88) plus long chat lines quoting "新会话" (conf 0.97+):
+ * confidence alone would pick a chat line and click the wrong place.
  */
 export function findExact(
   items: readonly OcrItem[],
@@ -391,8 +397,14 @@ export function findExact(
     .map((it) => ({
       item: it,
       exact: it.text === q ? 1 : 0,
+      len: it.text.length,
       confidence: typeof it.confidence === 'number' ? it.confidence : 0,
     }));
-  scored.sort((a, b) => (b.exact - a.exact) || (b.confidence - a.confidence));
+  scored.sort(
+    (a, b) =>
+      b.exact - a.exact ||
+      a.len - b.len ||
+      b.confidence - a.confidence,
+  );
   return { query: q, count: scored.length, matches: scored.map((s) => s.item) };
 }

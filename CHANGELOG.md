@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.1
+
+- **Fixed: `find_exact` ranking when no token equals the query exactly.** Previously the order was
+  exact-token → confidence. When the on-screen control carries an icon prefix (e.g. a sidebar button
+  recognized as `④新会话`, conf 0.88) and chat-log lines quote the same phrase at conf 0.97+, every
+  candidate had `exact = 0` and the high-confidence chat lines won — the click landed in the middle
+  of a paragraph instead of the button. Ranking is now exact-token → **shortest containing token** →
+  confidence: the minimal text that contains the query is the control label, while a long line merely
+  happens to contain it. Locked by a regression test built from the real mis-click.
+- Added `docs/demo.gif` — a real five-frame capture of the model finding the 「新会话」 button via
+  word-level OCR, moving the cursor, clicking it, and resetting. Built by `scripts/make-demo.mjs`
+  (live actions through the tool) and `scripts/make-gif.py` (Pillow composition with annotation
+  overlays); no ffmpeg required.
+- README (zh-CN) now leads with the demo GIF.
+
 ## 0.1.0
 
 Initial release.

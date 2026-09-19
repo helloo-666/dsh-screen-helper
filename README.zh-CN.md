@@ -1,8 +1,12 @@
 # dsh-screen-helper
 
+> 让 AI 模型**看你的屏幕、动你的鼠标、敲你的键盘**——一句话，就为你点开那个按钮。
+
 一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）插件，给模型一个工具
 —— `screen_automation` —— 用来驱动 **屏幕自动化小助手 / ScreenAutomationHelper** 桌面自动化 CLI：
 截屏、OCR 文字识别、屏幕上文字/图像定位、UI 控件树读取，以及鼠标 / 键盘 / 剪贴板操作。
+
+![demo](docs/demo.gif)
 
 > **安装前请先读 [安全](#安全) 一节。** 这个插件会让 AI 模型移动你真实的鼠标、敲你真实的键盘、
 > 读取你的屏幕和剪贴板。

@@ -124,6 +124,21 @@ test('findExact sorts by confidence within the same match rank', () => {
   assert.equal(r.matches[0].confidence, 0.9);
 });
 
+test('findExact ranks the shortest containing token above high-confidence chat lines', () => {
+  // Real-world regression: a sidebar button rendered with an icon prefix
+  // ("④新会话", conf 0.88) vs chat-log lines quoting the same phrase
+  // (conf 0.97+). No token equals the query exactly, so confidence alone
+  // would pick a chat line and click the wrong place. Shortest must win.
+  const items = [
+    { text: '④新会话', confidence: 0.883, box: [274, 296, 344, 317], center: [309, 306] },
+    { text: '红框框错了地方：它框住的是聊天记录里出现的「新会话」文字', confidence: 0.969, box: [655, 394, 1379, 414], center: [1017, 404] },
+    { text: '看清了！屏幕上有6个「新会话」', confidence: 0.985, box: [744, 617, 1374, 637], center: [1059, 627] },
+  ];
+  const r = findExact(items, '新会话');
+  assert.equal(r.matches[0].text, '④新会话');
+  assert.deepEqual(r.matches[0].box, [274, 296, 344, 317]);
+});
+
 test('findExact returns nothing for an empty query or empty items', () => {
   assert.equal(findExact(ITEMS, '   ').count, 0);
   assert.equal(findExact([], '文件').count, 0);
