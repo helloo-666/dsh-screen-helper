@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.5
+
+- **Plugin-enforced confirmation gate (`confirm: popup`, now the default).** dsh's native
+  approval popup is fail-closed in sessions where approval prompts are disabled, so it can
+  never ask. The plugin now gates mutate actions itself: the first call for a mouse/keyboard/
+  clipboard/workflow action does not run — it returns `blockedReason: "awaiting confirmation"`
+  with a one-time `confirmToken` plus the foreground app's name and extracted icon path in
+  `data`. The real action executes only via `window.confirm --approve <token>`; `--deny`
+  cancels. Tokens are single-use and expire after 10 minutes.
+- **New `window.confirm` action** (`--approve <token>` / `--deny <token>`): the only path
+  through which a gated mutate reaches the CLI.
+- **Config: `confirm: 'popup' | 'off'`.** `off` lets mutate actions run straight through
+  (for deployments that trust the model or rely on dsh's own approval).
+- Icons are extracted from the target executable via `System.Drawing.Icon.ExtractAssociatedIcon`
+  and surfaced for display in the confirmation card.
+
 ## 0.1.4
 
 - **Added `window.app` — foreground app identification with icon extraction.** Calls

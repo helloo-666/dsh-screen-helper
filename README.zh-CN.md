@@ -225,22 +225,55 @@ screen_automation({
 `System.Drawing.Icon.ExtractAssociatedIcon` 从可执行文件里抽出图标，保存成一张 PNG。
 这样你和模型都能**先看见要动的是哪个软件 + 它的图标**。
 
-### 弹窗询问
+### 弹窗询问（插件自带的确认门）
 
-把 `approval` 设成 `mutating` 或 `always` 后，任何会动鼠标 / 敲键盘 / 改状态的操作都会
-触发 dsh 的**原生审批弹窗**：
+> ⚠️ **重要前提**：dsh 自带的审批弹窗在「审批提示被禁用」的会话里是 **fail-closed** 的——
+> 它永远不弹，任何需要审批的动作都被自动拒绝。这就是为什么你可能「一直没见过弹窗」。
+> 所以本插件**自己实现了确认门**，不依赖 dsh 的审批服务。
+
+把 `confirm` 设成 `popup`（默认就是这样）：
 
 ```yaml
-approval: mutating   # 只询问会改变状态的动作（鼠标/键盘/剪贴板写入/工作流变更）
-# approval: always   # 包括只读查询也询问
+confirm: popup   # 鼠标/键盘/剪贴板/工作流改动：先弹确认卡，你批准才执行
+# confirm: off   # 插件不管，动作直接执行
 ```
 
-弹窗里的原因会写明「`mouse.click` on **DSH Desktop**」——应用名已经自动从当前前台窗口解析出来，
-你在弹窗里能直接看到要操作的是哪个程序。
+工作流是**两步**的（因为工具调用本身不能中途暂停等你点按钮）：
 
-> ⚠️ 图标显示的限制：dsh 的审批弹窗只能渲染文字 `reason`，**不支持附带图片**。所以图标不会
-> 出现在审批弹窗里；它通过 `window.app` 的结果（`iconPath`）返回，可以在聊天界面展示，
-> 作为操作前的可视化参考。这是 dsh 自身的 UI 契约决定的，不是插件不想放。
+1. 你（或模型）发起一个会改变屏幕的动作，比如 `mouse.click`
+2. 插件**不执行**，而是返回：
+
+```json
+{
+  "executed": false,
+  "blockedReason": "awaiting confirmation",
+  "data": {
+    "confirmToken": "41b23b68ce14",
+    "pendingAction": "mouse.click",
+    "pendingArgs": ["--point", "500,400"],
+    "appName": "哔哩哔哩",
+    "iconPath": "G:\\Temp\\dsh-screen-helper-icon-xxxx.png"
+  }
+}
+```
+
+3. 模型这时渲染一张**确认卡片**（带上应用名 + 从 exe 抽出来的图标），你点「允许 / 拒绝」
+4. 你点允许 → 模型调用：
+
+```bash
+screen_automation({
+  action: 'window.confirm',
+  args: ['--approve', '41b23b68ce14']
+})
+# 拒绝则用：args: ['--deny', '41b23b68ce14']
+```
+
+**真实动作只有走 `--approve` 这一步才会执行**——这是插件强制的，不是靠模型自觉。
+token 一次性有效，10 分钟过期。
+
+> 图标为什么出现在卡片里而不是「系统弹窗」里：dsh 的审批组件只渲染文字 `reason`，没有
+> 图片字段；而 genui 的交互卡片是模型回答的一部分。所以插件把「门」做在自己身上，
+> 「卡片 + 图标」由模型渲染，两者配合才是完整的一次确认。
 
 ```bash
 pnpm install

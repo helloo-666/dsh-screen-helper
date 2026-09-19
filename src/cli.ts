@@ -14,6 +14,10 @@
  */
 
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 /** Risk tier of one CLI subcommand path. */
 export type RiskTier =
@@ -422,12 +426,8 @@ export async function resolveForegroundApp(
 /** Extract an executable's associated icon to a temp PNG; null on any failure. */
 function extractIcon(exe: string): string | null {
   if (process.platform !== 'win32') return null
-  const fs = require('node:fs') as typeof import('node:fs')
-  const os = require('node:os') as typeof import('node:os')
-  const path = require('node:path') as typeof import('node:path')
-  const { spawnSync } = require('node:child_process') as typeof import('node:child_process')
-  const out = path.join(
-    os.tmpdir(),
+  const out = join(
+    tmpdir(),
     `dsh-screen-helper-icon-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`,
   )
   // Inline PowerShell; only Windows reaches here. Backtick-quote the exe path.
@@ -449,7 +449,7 @@ try {
       windowsHide: true,
     })
     const outText = (r.stdout?.toString() ?? '').trim()
-    if (outText === 'OK' && fs.existsSync(out)) return out
+    if (outText === 'OK' && existsSync(out)) return out
     return null
   } catch {
     return null

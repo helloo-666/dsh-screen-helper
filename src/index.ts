@@ -22,6 +22,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import z from '@deepseek-ai/schemastery'
+import { randomBytes } from 'node:crypto'
 
 import {
   classify,
@@ -47,10 +48,24 @@ export const inject = ['tools']
  */
 export type ApprovalMode = 'always' | 'mutating' | 'never'
 
+/**
+ * How the plugin itself gates screen-mutating actions when dsh's native
+ * approval popup is unavailable (e.g. in sessions where approval prompts are
+ * disabled and fail closed). The plugin renders its own confirmation card
+ * instead of relying on the host's popup.
+ *
+ * - `popup` — every mutate shows a confirmation card (with the target app's
+ *   icon + name) before running; the real action executes only after the user
+ *   approves the returned token.
+ * - `off`    — the plugin runs mutate actions directly (no plugin-side gate).
+ */
+export type ConfirmMode = 'popup' | 'off'
+
 export interface Config {
   cliPath: string
   timeoutMs: number
   approval: ApprovalMode
+  confirm: ConfirmMode
   blockDestructive: boolean
 }
 
@@ -60,6 +75,7 @@ export const Config: z<Config> = z.object({
   approval: z
     .union([z.const('always'), z.const('mutating'), z.const('never')])
     .default('never'),
+  confirm: z.union([z.const('popup'), z.const('off')]).default('popup'),
   blockDestructive: z.boolean().default(false),
 })
 
@@ -112,6 +128,7 @@ const ACTIONS: Record<RiskTier, readonly string[]> = {
     'clipboard.read',
     'window',
     'window.app',
+    'window.confirm',
   ],
   mutate: [
     'mouse.move',
@@ -202,6 +219,42 @@ interface ToolValue {
   [key: string]: JsonValue
 }
 
+/**
+ * Plugin-enforced confirmation gate.
+ *
+ * dsh's native approval popup fails closed in sessions where approval prompts
+ * are disabled, so it can never ask. To still let the operator veto a screen
+ * action, the plugin gates mutate calls itself: the first call does not run —
+ * it stashes the intended action under a one-time token and returns
+ * `blockedReason: 'awaiting confirmation'` with the token + target app info in
+ * `data`. The model then surfaces a confirmation card, and the real action
+ * executes only when `window.confirm --approve <token>` is called.
+ */
+interface PendingAction {
+  action: string
+  argv: readonly string[]
+  cliPath: string
+  config: Config
+  tier: RiskTier
+  appName: string
+  appTitle: string | null
+  iconPath: string | null
+  createdAt: number
+}
+const pendingActions = new Map<string, PendingAction>()
+const PENDING_TTL_MS = 10 * 60_000
+
+function makeToken(): string {
+  return randomBytes(6).toString('hex')
+}
+
+function prunePending(): void {
+  const now = Date.now()
+  for (const [tok, p] of pendingActions) {
+    if (now - p.createdAt > PENDING_TTL_MS) pendingActions.delete(tok)
+  }
+}
+
 export function apply(ctx: Context, config: Config): void {
   const cliPath = resolveCliPath(config.cliPath)
 
@@ -290,6 +343,50 @@ export function apply(ctx: Context, config: Config): void {
           }
         }
 
+        // 1b. Plugin-enforced confirmation gate. When `confirm: popup` and this is
+        // a mutate call that is NOT itself the approval-resolving `window.confirm`
+        // action and does not carry an `--token`, stash the intended action and
+        // hand back a token so the model can surface a confirmation card. The
+        // real action runs only through `window.confirm --approve <token>`.
+        if (
+          config.confirm === 'popup' &&
+          tier === 'mutate' &&
+          args.action !== 'window.confirm' &&
+          !argv.includes('--token')
+        ) {
+          prunePending()
+          const app = await resolveForegroundApp(cliPath, config.timeoutMs, exec.signal)
+          const token = makeToken()
+          pendingActions.set(token, {
+            action: args.action,
+            argv,
+            cliPath,
+            config,
+            tier,
+            appName: app.displayName,
+            appTitle: app.title,
+            iconPath: app.iconPath,
+            createdAt: Date.now(),
+          })
+          return {
+            action: args.action,
+            tier,
+            executed: false,
+            blockedReason: 'awaiting confirmation',
+            exitCode: null,
+            data: {
+              confirmToken: token,
+              pendingAction: args.action,
+              pendingArgs: argv,
+              appName: app.displayName,
+              appTitle: app.title,
+              iconPath: app.iconPath,
+            } as unknown as JsonValue,
+            text: null,
+            stderr: null,
+          }
+        }
+
         // 2. Approval gate. Under `always` this covers read-only calls too.
         if (needsApproval(config.approval, tier)) {
           const decision = await requestApproval(ctx, exec, cliPath, config, tier, args.action, argv)
@@ -319,6 +416,9 @@ export function apply(ctx: Context, config: Config): void {
         }
         if (args.action === 'window.app') {
           return runWindowApp({ cliPath, config, tier, exec, action: args.action })
+        }
+        if (args.action === 'window.confirm') {
+          return runWindowConfirm({ argv, exec })
         }
 
         const outcome = await runCli({
@@ -752,6 +852,69 @@ async function runWindowApp(params: {
   }
 }
 
+/**
+ * `window.confirm` action: resolve a stashed, token-gated mutate.
+ *
+ * `--approve <token>` runs the pending action (the only path through which a
+ * `confirm: popup` mutate ever reaches the CLI) and returns its result.
+ * `--deny <token>` drops the pending action and reports it denied. A missing or
+ * unknown token is reported as already-expired so the model can re-request.
+ */
+async function runWindowConfirm(params: {
+  argv: readonly string[]
+  exec: { signal: AbortSignal }
+}): Promise<ToolValue> {
+  const mode = params.argv.includes('--deny') ? 'deny' : 'approve'
+  const ti = params.argv.indexOf(mode === 'deny' ? '--deny' : '--approve')
+  const token =
+    ti >= 0 && ti + 1 < params.argv.length ? (params.argv[ti + 1] as string) : ''
+  prunePending()
+  const pending = token ? pendingActions.get(token) : undefined
+  if (!pending) {
+    return {
+      action: 'window.confirm',
+      tier: 'observe',
+      executed: false,
+      blockedReason: 'unknown or expired confirmation token',
+      exitCode: null,
+      data: { resolved: false, mode, token } as unknown as JsonValue,
+      text: null,
+      stderr: null,
+    }
+  }
+  if (mode === 'deny') {
+    pendingActions.delete(token)
+    return {
+      action: 'window.confirm',
+      tier: 'observe',
+      executed: false,
+      blockedReason: `the user denied "${pending.action}" on ${pending.appName}`,
+      exitCode: null,
+      data: { resolved: true, mode: 'deny', action: pending.action } as unknown as JsonValue,
+      text: null,
+      stderr: null,
+    }
+  }
+  // approve: run the real action now.
+  pendingActions.delete(token)
+  const outcome = await runCli({
+    cliPath: pending.cliPath,
+    invocation: { path: resolvePath(pending.action), args: [...pending.argv, '--token', token] },
+    timeoutMs: pending.config.timeoutMs,
+    signal: params.exec.signal,
+  })
+  return {
+    action: pending.action,
+    tier: pending.tier,
+    executed: true,
+    blockedReason: null,
+    exitCode: outcome.ok ? 0 : outcome.exitCode,
+    data: outcome.ok ? (outcome.json ?? null) : null,
+    text: outcome.ok ? null : outcome.message,
+    stderr: outcome.ok ? null : outcome.stderr,
+  }
+}
+
 /** Pull `--target` from argv if present, else undefined. */
 function pickTarget(argv: readonly string[]): string | undefined {
   const i = argv.indexOf('--target')
@@ -784,6 +947,8 @@ function buildDescription(config: Config): string {
     'ui.click is the semantic path: pass --name (and optionally --role) to confirm a control exists in the UI tree by identity, then it auto-resolves the on-screen pixel via OCR and clicks it. Add --verify to re-inspect the clicked point and confirm it landed on the expected control (the same closed-loop check CUA/Codex-style agents use to avoid clicking the wrong element).',
     'ui.tree / ui.find / ui.inspect read the accessibility (UIA) tree: identity and hierarchy, not pixel geometry. SAH does not expose element bounding boxes via ui.find, so ui.click resolves a pixel via OCR; ui.inspect --point does return the element bounds/name under a cursor, which --verify relies on.',
     'Coordinates are absolute screen pixels; use screen.monitors to check the display layout first.',
+    '',
+    `CONFIRMATION GATE: this deployment sets confirm: ${config.confirm}. When "popup", every mutate action (mouse/keyboard/clipboard/workflow) is held until the operator approves it: the first call returns blockedReason "awaiting confirmation" with a confirmToken and the foreground app name in data. Surface a confirmation card (with the app icon) and call window.confirm --approve <token> to actually run it, or window.confirm --deny <token> to cancel. The real action never runs without that approve step. (dsh's own approval popup is disabled in sessions where approval prompts fail closed, so the plugin provides this gate itself.)`,
     '',
     policy,
     'The helper must be installed locally; if calls fail, run action "health" to diagnose.',

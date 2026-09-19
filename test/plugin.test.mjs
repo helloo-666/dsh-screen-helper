@@ -35,6 +35,7 @@ test('Config schema supplies every declared default', () => {
   assert.equal(parsed.cliPath, '');
   assert.equal(parsed.timeoutMs, 60_000);
   assert.equal(parsed.approval, 'never');
+  assert.equal(parsed.confirm, 'popup');
   assert.equal(parsed.blockDestructive, false);
 });
 
@@ -56,7 +57,9 @@ test('approval mode decides which tiers ask', async () => {
     const { ctx, registered } = makeContext();
     let asked = 0;
     ctx.approval = { async request() { asked += 1; return 'allowed-once'; } };
-    apply(ctx, Config({ approval: mode, cliPath: 'D:\\nope\\nope.exe' }));
+    // confirm:off so the dsh-native approval gate (what this test targets) is
+    // what decides; the plugin confirm gate is covered by its own tests.
+    apply(ctx, Config({ approval: mode, confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
     await registered.get('screen_automation').execute(
       { action, args: [] },
       { signal: new AbortController().signal, agent: undefined, callId: 'c1' },
@@ -183,7 +186,8 @@ test('ui.click resolves a UI-tree identity to a real click via OCR', async () =>
   if (!sa) return;
   const { ctx, registered } = makeContext();
   ctx.approval = { async request() { return 'allowed-once'; } };
-  apply(ctx, Config({ approval: 'never', cliPath: sa }));
+  // confirm:off — this e2e targets ui.click resolution, not the confirm gate.
+  apply(ctx, Config({ approval: 'never', confirm: 'off', cliPath: sa }));
   const tool = registered.get('screen_automation');
   // Open a known Win32 target so ui.find has a real accessible name to confirm.
   const { execSync } = await import('node:child_process');
@@ -226,7 +230,7 @@ test('blockDestructive refuses workflow mutation without spawning', async () => 
 
 test('approval gate denies when no answerer is composed', async () => {
   const { ctx, registered } = makeContext();
-  apply(ctx, Config({ approval: 'mutating', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
 
   // ctx has no `approval` service, which must fail closed.
@@ -247,7 +251,7 @@ test('approval gate proceeds only on an explicit approval', async () => {
       return 'allowed-once';
     },
   };
-  apply(ctx, Config({ approval: 'mutating', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
 
   const value = await tool.execute(
@@ -267,7 +271,7 @@ test('a throwing approver is treated as a refusal', async () => {
       throw new Error('answerer exploded');
     },
   };
-  apply(ctx, Config({ approval: 'mutating', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
 
   const value = await tool.execute(
@@ -289,7 +293,7 @@ test('the grant token is allowed-once, and nothing else grants', async () => {
   for (const outcome of ['approved', 'allow', 'yes', 'allowed', '', 'ALLOWED-ONCE']) {
     const { ctx, registered } = makeContext();
     ctx.approval = { async request() { return outcome; } };
-    apply(ctx, Config({ approval: 'mutating', cliPath: 'D:\\nope\\nope.exe' }));
+    apply(ctx, Config({ approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
     const value = await registered.get('screen_automation').execute(
       { action: 'mouse.click', args: ['--point', '1,1'] },
       { signal: new AbortController().signal, agent: undefined, callId: 'c1' },
@@ -300,7 +304,7 @@ test('the grant token is allowed-once, and nothing else grants', async () => {
   for (const outcome of DENYING) {
     const { ctx, registered } = makeContext();
     ctx.approval = { async request() { return outcome; } };
-    apply(ctx, Config({ approval: 'mutating', cliPath: 'D:\\nope\\nope.exe' }));
+    apply(ctx, Config({ approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
     const value = await registered.get('screen_automation').execute(
       { action: 'mouse.click', args: ['--point', '1,1'] },
       { signal: new AbortController().signal, agent: undefined, callId: 'c1' },
@@ -311,7 +315,7 @@ test('the grant token is allowed-once, and nothing else grants', async () => {
   // And the real token must actually grant.
   const { ctx, registered } = makeContext();
   ctx.approval = { async request() { return 'allowed-once'; } };
-  apply(ctx, Config({ approval: 'mutating', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
   const granted = await registered.get('screen_automation').execute(
     { action: 'mouse.click', args: ['--point', '1,1'] },
     { signal: new AbortController().signal, agent: undefined, callId: 'c1' },
@@ -340,6 +344,73 @@ test('read tier runs without asking even under the strict policy', async () => {
   assert.equal(value.executed, true);
   assert.equal(value.exitCode, 0);
   assert.ok(value.data, 'status should return parsed JSON');
+});
+
+/**
+ * The plugin's own confirmation gate. dsh's native approval popup fails closed
+ * in sessions where approval prompts are disabled, so the plugin must be able to
+ * hold a mutate itself and release it only on an explicit approve.
+ */
+test('confirm:popup holds a mutate and returns a one-time token', async () => {
+  const { ctx, registered } = makeContext();
+  apply(ctx, Config({ confirm: 'popup', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+
+  const value = await tool.execute(
+    { action: 'mouse.click', args: ['--point', '1,1'] },
+    { signal: new AbortController().signal, agent: undefined, callId: 'c1' },
+  );
+  assert.equal(value.executed, false, 'a held mutate must not reach the screen');
+  assert.match(String(value.blockedReason), /awaiting confirmation/);
+  const data = value.data ?? {};
+  assert.ok(data.confirmToken, 'must hand back a token to approve with');
+  assert.equal(data.pendingAction, 'mouse.click');
+  assert.deepEqual(data.pendingArgs, ['--point', '1,1']);
+});
+
+test('window.confirm --approve runs the stashed action, once', async () => {
+  const { ctx, registered } = makeContext();
+  apply(ctx, Config({ confirm: 'popup', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+  const exec = { signal: new AbortController().signal, agent: undefined, callId: 'c1' };
+
+  const held = await tool.execute({ action: 'mouse.click', args: ['--point', '1,1'] }, exec);
+  const token = held.data.confirmToken;
+
+  const ran = await tool.execute({ action: 'window.confirm', args: ['--approve', token] }, exec);
+  assert.equal(ran.executed, true, 'approving must run the stashed action');
+  assert.equal(ran.action, 'mouse.click');
+
+  // The token is single-use: a second approve must not re-run anything.
+  const again = await tool.execute({ action: 'window.confirm', args: ['--approve', token] }, exec);
+  assert.equal(again.executed, false);
+  assert.match(String(again.blockedReason), /expired|unknown/);
+});
+
+test('window.confirm --deny cancels without touching the screen', async () => {
+  const { ctx, registered } = makeContext();
+  apply(ctx, Config({ confirm: 'popup', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+  const exec = { signal: new AbortController().signal, agent: undefined, callId: 'c1' };
+
+  const held = await tool.execute({ action: 'keyboard.write', args: ['--text', 'hi'] }, exec);
+  const denied = await tool.execute(
+    { action: 'window.confirm', args: ['--deny', held.data.confirmToken] },
+    exec,
+  );
+  assert.equal(denied.executed, false);
+  assert.match(String(denied.blockedReason), /denied/);
+});
+
+test('confirm:off lets a mutate run straight through', async () => {
+  const { ctx, registered } = makeContext();
+  apply(ctx, Config({ confirm: 'off', approval: 'never', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+  const value = await tool.execute(
+    { action: 'mouse.click', args: ['--point', '1,1'] },
+    { signal: new AbortController().signal, agent: undefined, callId: 'c1' },
+  );
+  assert.equal(value.executed, true);
 });
 
 test('render produces a readable block for both outcomes', () => {
