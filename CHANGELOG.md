@@ -4,6 +4,12 @@
 
 Initial release.
 
+- **Published to GitHub** at `helloo-666/dsh-screen-helper` with a `v0.1.0` release carrying the
+  installable tarball, and a `install.ps1` script that downloads the release and writes `cliPath` /
+  `approval` into the profile's `cordis.patch.yml`. README documents the Windows-only prerequisite
+  (the plugin drives the Windows ScreenAutomationHelper CLI; there is no macOS/Linux equivalent) and
+  gives a one-line `dsh plugin add <release-url>` install.
+
 - **`find_exact` action — precise word-level text location.** `screen.find` returns the box of the
   whole *line* containing a hit, which is too coarse to click a small control. `find_exact` reuses
   `screen.recognize`'s word-level OCR (one box per token) and filters those tokens for ones
