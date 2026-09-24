@@ -706,13 +706,39 @@ async function runUiClick(params: {
   if (scopeRect) {
     const [x1, y1, x2, y2] = scopeRect
     const before = ranked.matches.length
-    const inside = ranked.matches.filter((m) => {
+    // Score by overlap, not by whether the centre point is inside: a token whose
+    // box straddles the window border has its centre just outside and would be
+    // rejected by the bounds guard after being chosen. Prefer tokens fully
+    // inside, then fall back to the most-overlapping one.
+    const overlaps = ranked.matches.map((m) => {
+      const b = m.box ?? []
+      const bx1 = b[0] ?? m.center[0] ?? 0
+      const by1 = b[1] ?? m.center[1] ?? 0
+      const bx2 = b[2] ?? bx1
+      const by2 = b[3] ?? by1
+      const ix1 = Math.max(bx1, x1)
+      const iy1 = Math.max(by1, y1)
+      const ix2 = Math.min(bx2, x2)
+      const iy2 = Math.min(by2, y2)
+      const area = Math.max(0, ix2 - ix1) * Math.max(0, iy2 - iy1)
+      const boxArea = Math.max(1, (bx2 - bx1) * (by2 - by1))
       const cx = m.center[0] ?? 0
       const cy = m.center[1] ?? 0
-      return cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2
+      return { m, area, frac: area / boxArea, inside: cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2 }
     })
-    scopedOut = before - inside.length
-    if (inside.length > 0) ranked = { query: ranked.query, count: inside.length, matches: inside }
+    const contained = overlaps.filter((o) => o.inside && o.area > 0).map((o) => o.m)
+    if (contained.length > 0) {
+      scopedOut = before - contained.length
+      ranked = { query: ranked.query, count: contained.length, matches: contained }
+    } else {
+      const partial = overlaps.filter((o) => o.frac > 0)
+      scopedOut = before - partial.length
+      if (partial.length > 0) {
+        partial.sort((a, b) => b.frac - a.frac)
+        const best = partial.map((o) => o.m)
+        ranked = { query: ranked.query, count: best.length, matches: best }
+      }
+    }
   }
   const target = ranked.matches[0]
   // With no UI-tree confirmation the click is only a guess from OCR. If several
@@ -744,8 +770,20 @@ async function runUiClick(params: {
     }
   }
 
+  // A token whose box straddles the window border has its centre just outside,
+  // which the bounds guard would reject. Clamp into the window instead so the
+  // click lands on the part of the token that is actually visible.
+  let center = target.center
+  if (scopeRect) {
+    const [x1, y1, x2, y2] = scopeRect
+    const cx = center[0] ?? 0
+    const cy = center[1] ?? 0
+    const nx = Math.min(Math.max(cx, x1), x2)
+    const ny = Math.min(Math.max(cy, y1), y2)
+    if (nx !== cx || ny !== cy) center = [nx, ny]
+  }
+
   // Step 3: click the pixel box of the located token.
-  const center = target.center
   const buttonIdx = argv.indexOf('--button')
   const button =
     buttonIdx >= 0 && buttonIdx + 1 < argv.length ? (argv[buttonIdx + 1] ?? 'left') : 'left'
@@ -837,11 +875,37 @@ async function runUiClick(params: {
         }
       }
     }
+    // Structural check on top of the class-name heuristic: a window with no
+    // child HWNDs can only receive the click on its top level, which self-drawn
+    // apps usually ignore. Better to say that than report a clean click that
+    // silently did nothing.
+    const clickHwnd = numericFlag(argv, '--hwnd')
+    const structProbe =
+      clickHwnd !== undefined
+        ? await runBackgroundInput({
+            action: 'probe',
+            x: center[0],
+            y: center[1],
+            hwnd: clickHwnd,
+            timeoutMs: params.config.timeoutMs,
+          })
+        : null
+    const structNote: Record<string, unknown> =
+      structProbe !== null && structProbe.childCount === 0
+        ? {
+            noChildWindows: true,
+            structuralCaveat:
+              'This window exposes no child HWNDs, so the click could only be sent to its ' +
+              'top-level window; self-drawn apps usually ignore that, so it may have had no ' +
+              'effect. Run `probe --hwnd <handle>` first, or use inputMode: real for this app.',
+          }
+        : {}
+
     return {
       action: params.action, tier: params.tier, executed: true,
       blockedReason: null, exitCode: 0,
       data: {
-        step: 'clicked', ...baseBg, ...bgClick, ...backgroundCaveat(bgClick), ...verify,
+        step: 'clicked', ...baseBg, ...bgClick, ...backgroundCaveat(bgClick), ...structNote, ...verify,
       } as unknown as JsonValue,
       text: null, stderr: null,
     }
@@ -1474,6 +1538,7 @@ function buildDescription(config: Config): string {
     'ui.click is the semantic path: pass --name (and optionally --role) to confirm a control exists in the UI tree by identity, then it auto-resolves the on-screen pixel via OCR and clicks it. Add --verify to re-inspect the clicked point and confirm it landed on the expected control (the same closed-loop check CUA/Codex-style agents use to avoid clicking the wrong element).',
     'ui.tree / ui.find / ui.inspect read the accessibility (UIA) tree: identity and hierarchy, not pixel geometry. SAH does not expose element bounding boxes via ui.find, so ui.click resolves a pixel via OCR; ui.inspect --point does return the element bounds/name under a cursor, which --verify relies on.',
     'Coordinates are absolute screen pixels; use screen.monitors to check the display layout first.',
+    'Before clicking a window you have not driven before, run `probe --hwnd <handle>` (read-only, sends no input). It reports backgroundCapable and a diagnosis: self-drawn UI (Chromium/Electron/Qt) exposes no child windows, so background messages may be ignored there and inputMode: real is the reliable path.',
     '',
     `CONFIRMATION GATE: this deployment sets confirm: ${config.confirm}. When "popup", every mutate action (mouse/keyboard/clipboard/workflow) is held until the operator approves it: the first call returns blockedReason "awaiting confirmation" with a confirmToken and the foreground app name in data. Surface a confirmation card (with the app icon) and call window.confirm --approve <token> to actually run it, or window.confirm --deny <token> to cancel. The real action never runs without that approve step. (dsh's own approval popup is disabled in sessions where approval prompts fail closed, so the plugin provides this gate itself.)`,
     '',

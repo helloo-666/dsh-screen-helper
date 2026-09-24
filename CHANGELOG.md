@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.16
+
+- **Fixed: a token straddling the window border made the click fail.** Window
+  scoping (0.1.14) selected tokens by centre point, but a token whose box
+  straddles the border has its centre just outside — it was chosen and then
+  rejected by the out-of-bounds guard. `ui.click --name 编辑 --hwnd 723022` failed
+  with "point 1724,238 is outside ... (619,214,1721,760)" for exactly this
+  reason. Selection now scores by overlap (preferring fully-contained tokens) and
+  the click point is clamped into the window, so it lands on the visible part.
+- **`ui.click` now warns when the target window has no child HWNDs.** On top of
+  the existing class-name heuristic, it checks the structure: self-drawn UI can
+  only receive the click on its top level, which is usually ignored. Reports
+  `noChildWindows` plus a `structuralCaveat` instead of a clean-looking click
+  that silently did nothing.
+- The tool description now tells the model to run `probe` before clicking a window
+  it has not driven before.
+
 ## 0.1.15
 
 - **New read-only action `probe`: check whether a window can be driven in the
