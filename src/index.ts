@@ -709,6 +709,65 @@ async function runUiClick(params: {
   const button =
     buttonIdx >= 0 && buttonIdx + 1 < argv.length ? (argv[buttonIdx + 1] ?? 'left') : 'left'
   const clickArgs = ['--point', `${center[0]},${center[1]}`, '--button', button]
+
+  // Background delivery: `ui.click` is the most accurate click path (UIA
+  // identity + OCR + optional verify), so it is the one callers reach for by
+  // default. Routing only `mouse.click` would leave the primary path still
+  // grabbing the cursor. Same message-based delivery, cursor untouched.
+  if (params.config.inputMode === 'background') {
+    const bgClick = await runBackgroundInput({
+      action: 'click',
+      x: center[0],
+      y: center[1],
+      title: flagValue(argv, '--title'),
+      hwnd: numericFlag(argv, '--hwnd'),
+      timeoutMs: params.config.timeoutMs,
+    })
+    const baseBg = {
+      uiStatus: status,
+      uiCount: count,
+      locatedText: target.text,
+      box: target.box,
+      center,
+      button,
+      inputMode: 'background',
+    } as Record<string, unknown>
+    if (!bgClick) {
+      return {
+        action: params.action, tier: params.tier, executed: false,
+        blockedReason: 'background input helper unavailable; refusing to fall back to the real cursor while inputMode is "background"',
+        exitCode: null, data: { step: 'clicked', ...baseBg } as unknown as JsonValue,
+        text: null, stderr: null,
+      }
+    }
+    if (bgClick.ok === false) {
+      return {
+        action: params.action, tier: params.tier, executed: true,
+        blockedReason: typeof bgClick.error === 'string' ? bgClick.error : 'background input was not delivered',
+        exitCode: 1, data: { step: 'clicked', ...baseBg, ...bgClick } as unknown as JsonValue,
+        text: null, stderr: null,
+      }
+    }
+    // `--verify` inspects whatever sits under the REAL cursor, which background
+    // mode never moves — it would confirm nothing. Say so instead of echoing a
+    // green checkmark.
+    const verifyRequested = argv.includes('--verify')
+    return {
+      action: params.action, tier: params.tier, executed: true,
+      blockedReason: null, exitCode: 0,
+      data: {
+        step: 'clicked', ...baseBg, ...bgClick, ...backgroundCaveat(bgClick),
+        ...(verifyRequested
+          ? {
+              verifySkipped: true,
+              verifyNote: '--verify inspects the element under the physical cursor, which background mode does not move. It cannot confirm a background click; verify with a read (ui.tree / screen.recognize) instead.',
+            }
+          : {}),
+      } as unknown as JsonValue,
+      text: null, stderr: null,
+    }
+  }
+
   const click = await runCli({
     cliPath: params.cliPath,
     invocation: { path: ['mouse', 'click'], args: clickArgs },
@@ -921,6 +980,18 @@ function backgroundPlan(action: string, argv: readonly string[]): BackgroundPlan
   }
   if (action === 'keyboard.hotkey') return null
   return null
+}
+
+/** Read `--name <value>` from argv, or undefined. */
+function flagValue(argv: readonly string[], name: string): string | undefined {
+  const i = argv.indexOf(name)
+  return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined
+}
+
+/** Read `--name <digits>` as a number, or undefined when absent/non-numeric. */
+function numericFlag(argv: readonly string[], name: string): number | undefined {
+  const raw = flagValue(argv, name)
+  return raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : undefined
 }
 
 /** Parse a "x,y" point string; null when malformed. */
