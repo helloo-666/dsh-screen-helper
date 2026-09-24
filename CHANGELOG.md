@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.17
+
+- **New: `--input-mode real|background` overrides the configured mode for a single
+  call.** A self-drawn window needs the physical cursor, and that used to require
+  editing global config and reloading the profile. Now one call can opt in, and
+  the `noChildWindows` warning names this exact flag as the retry.
+- **Fixed: `--hwnd`/`--title` leaked to the CLI.** They are plugin-only flags that
+  tell background delivery which window to target; the CLI rejects them
+  (exit code 2), so any real-mode click passing `--hwnd` failed. They are now
+  stripped along with `--input-mode` when the plugin is not consuming them.
+
 ## 0.1.16
 
 - **Fixed: a token straddling the window border made the click fail.** Window

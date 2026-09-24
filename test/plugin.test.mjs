@@ -204,6 +204,24 @@ test('ui.click is mutate-tier (prompts under always) and not concurrency-safe', 
   assert.equal(tool.isConcurrencySafe({ action: 'ui.click' }), false);
 });
 
+test('--input-mode overrides the configured mode for one call', async () => {
+  // A self-drawn window needs the real cursor, and that should not require
+  // editing global config. The flag is stripped before reaching the CLI.
+  const { ctx, registered } = makeContext();
+  ctx.approval = { async request() { return 'allowed-once'; } };
+  apply(ctx, Config({ inputMode: 'background', confirm: 'off', approval: 'never', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+  const exec = { signal: new AbortController().signal, agent: undefined, callId: 'mode-override' };
+  // Background: the background helper runs and reports its mode.
+  const bg = await tool.execute({ action: 'mouse.click', args: ['--point', '5,5'] }, exec);
+  assert.equal(bg.data.inputMode, 'background');
+  // real: routed to the CLI instead (which fails here because the path is fake),
+  // and the --input-mode flag must not appear in what the CLI received.
+  const rl = await tool.execute({ action: 'mouse.click', args: ['--point', '5,5', '--input-mode', 'real'] }, exec);
+  assert.equal(rl.data, null);
+  assert.doesNotMatch(String(rl.text ?? ''), /--input-mode/);
+});
+
 test('probe reports whether a window can be driven in the background', async () => {
   // Self-drawn apps (Chromium/Electron/Qt) expose no child HWNDs, so messages can
   // only reach their top-level window and may be ignored. probe must say so

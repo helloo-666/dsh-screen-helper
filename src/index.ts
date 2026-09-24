@@ -1,6 +1,6 @@
 /**
- * dsh-screen-helper — a DeepSeek Harness bundle that drives the
- * ScreenAutomationHelper CLI (屏幕自动化小助手) from the model.
+ * dsh-screen-helper 閳?a DeepSeek Harness bundle that drives the
+ * ScreenAutomationHelper CLI (鐏炲繐绠烽懛顏勫З閸栨牕鐨崝鈺傚) from the model.
  *
  * Design notes that matter:
  *
@@ -43,9 +43,9 @@ export const inject = ['tools']
 /**
  * How much of the surface requires user approval before running.
  *
- * - `always`   — every call, including read-only ones, asks first.
- * - `mutating` — only actions that can move the mouse, type, or change state ask.
- * - `never`    — nothing asks; the model runs everything.
+ * - `always`   閳?every call, including read-only ones, asks first.
+ * - `mutating` 閳?only actions that can move the mouse, type, or change state ask.
+ * - `never`    閳?nothing asks; the model runs everything.
  */
 export type ApprovalMode = 'always' | 'mutating' | 'never'
 
@@ -55,24 +55,24 @@ export type ApprovalMode = 'always' | 'mutating' | 'never'
  * disabled and fail closed). The plugin renders its own confirmation card
  * instead of relying on the host's popup.
  *
- * - `popup` — every mutate shows a confirmation card (with the target app's
+ * - `popup` 閳?every mutate shows a confirmation card (with the target app's
  *   icon + name) before running; the real action executes only after the user
  *   approves the returned token.
- * - `off`    — the plugin runs mutate actions directly (no plugin-side gate).
+ * - `off`    閳?the plugin runs mutate actions directly (no plugin-side gate).
  */
 export type ConfirmMode = 'popup' | 'off'
 
 /**
  * How screen input is delivered to the target application.
  *
- * - `background` (default) — input is sent as Win32 messages to the target
+ * - `background` (default) 閳?input is sent as Win32 messages to the target
  *   window's child control. The physical cursor never moves and keyboard focus
  *   is never stolen, so the operator keeps using their own mouse while the
  *   model drives another window. Only works on applications that handle
  *   standard window messages; self-drawn UIs (Electron/Chrome/Qt) may ignore
  *   them, and the plugin reports that honestly instead of silently
  *   falling back to the real cursor.
- * - `real` — moves the physical cursor via ScreenAutomationHelper (works
+ * - `real` 閳?moves the physical cursor via ScreenAutomationHelper (works
  *   everywhere, but does take over the mouse).
  */
 export type InputMode = 'background' | 'real'
@@ -196,14 +196,14 @@ function actionToPath(action: string): string[] {
 /**
  * Actions that are computed in the plugin rather than passed straight to the
  * CLI. `find_exact` reuses `screen.recognize`'s word-level OCR and narrows the
- * result to the precise token boxes matching the query — something the CLI's
+ * result to the precise token boxes matching the query 閳?something the CLI's
  * own `screen.find` cannot do, because it returns the whole line box.
  */
 const COMPUTED_ACTIONS: Record<string, string[]> = {
   find_exact: ['screen', 'recognize'],
   // `window.app` resolves the foreground application (window foreground) and
   // extracts its icon to a PNG so the operator can see which app a pending
-  // action will touch. Note: `ui.click` is intentionally NOT here — it must
+  // action will touch. Note: `ui.click` is intentionally NOT here 閳?it must
   // classify as mutate (see runUiClick), not as observe-tier ui.find.
   'window.app': ['window', 'foreground'],
 }
@@ -218,7 +218,7 @@ function resolvePath(action: string): string[] {
  *
  * The index signature is required, not decorative: `output.schema` is an open
  * object, so `defineTool` infers `Record<string, JsonValue>` as the canonical
- * value type, and every member — including absent ones — must be assignable to
+ * value type, and every member 閳?including absent ones 閳?must be assignable to
  * `JsonValue`. Optional data is therefore modeled as `null` rather than an
  * omitted key, which keeps the type total and the rendered output explicit.
  */
@@ -243,7 +243,7 @@ interface ToolValue {
  *
  * dsh's native approval popup fails closed in sessions where approval prompts
  * are disabled, so it can never ask. To still let the operator veto a screen
- * action, the plugin gates mutate calls itself: the first call does not run —
+ * action, the plugin gates mutate calls itself: the first call does not run 閳?
  * it stashes the intended action under a one-time token and returns
  * `blockedReason: 'awaiting confirmation'` with the token + target app info in
  * `data`. The model then surfaces a confirmation card, and the real action
@@ -445,7 +445,7 @@ const GRANT = 'allowed-once'
  * Ask the user, fail-closed, and normalize every non-grant outcome to a refusal.
  *
  * `unavailable` covers "no answerer composed", "the answerer threw", and "a rogue
- * return value" — all of which must deny. The comparison is against the allow
+ * return value" 閳?all of which must deny. The comparison is against the allow
  * token rather than a list of denial tokens so that an unrecognized outcome
  * denies too.
  */
@@ -462,7 +462,7 @@ async function requestApproval(
   if (approval?.request === undefined) return 'unavailable'
 
   // For actions that touch the screen, name the foreground app in the reason so
-  // the human approving sees *which application* is about to be operated — not
+  // the human approving sees *which application* is about to be operated 閳?not
   // just the tool action. The dsh popup renders `reason` text only (no icon
   // field), so the icon itself is surfaced separately via `window.app`.
   let appNote = ''
@@ -625,7 +625,7 @@ async function runUiClick(params: {
   // The UI tree is often empty or unhelpful: desktop icons, Electron and other
   // self-drawn apps expose little to no UIA. A silent tree therefore does not
   // mean the control is absent, so fall through to the OCR step below and let
-  // the label itself decide — flagging that identity was never confirmed.
+  // the label itself decide 閳?flagging that identity was never confirmed.
   // Only bail here when there is no text to look for at all.
   const identityConfirmed = status === 'matched' && count >= 1
   if (!identityConfirmed && !name && !role) {
@@ -694,7 +694,7 @@ async function runUiClick(params: {
 
   // When the caller scoped the click to a window, only accept text inside it.
   // Otherwise the whole screen is searched and the first match may sit outside
-  // the target — which the out-of-bounds guard then rightly refuses.
+  // the target 閳?which the out-of-bounds guard then rightly refuses.
   const scopeRect = await resolveTargetRect({
     cliPath: params.cliPath,
     hwnd: numericFlag(argv, '--hwnd'),
@@ -743,7 +743,7 @@ async function runUiClick(params: {
   const target = ranked.matches[0]
   // With no UI-tree confirmation the click is only a guess from OCR. If several
   // on-screen tokens matched, silently taking the first one can hit the wrong
-  // element — report the count and the alternatives so the caller knows.
+  // element 閳?report the count and the alternatives so the caller knows.
   const ocrMatchCount = ranked.matches.length
   const ocrAmbiguous = !identityConfirmed && ocrMatchCount > 1
   const ocrAlternatives = ocrAmbiguous
@@ -831,7 +831,7 @@ async function runUiClick(params: {
       }
     }
     // `--verify` normally re-inspects the element under the REAL cursor, which
-    // background mode never moves — but ui.inspect --point is also unavailable
+    // background mode never moves 閳?but ui.inspect --point is also unavailable
     // here, so skipping outright would leave no signal at all. Instead verify by
     // observation: OCR the same region again and report whether anything changed.
     // That cannot prove the right control was hit, so it is labelled as such.
@@ -897,7 +897,8 @@ async function runUiClick(params: {
             structuralCaveat:
               'This window exposes no child HWNDs, so the click could only be sent to its ' +
               'top-level window; self-drawn apps usually ignore that, so it may have had no ' +
-              'effect. Run `probe --hwnd <handle>` first, or use inputMode: real for this app.',
+              'effect. To drive this window, retry the same call with --input-mode real ' +
+              '(which moves the physical cursor), or run `probe --hwnd <handle>` first.',
           }
         : {}
 
@@ -930,7 +931,7 @@ async function runUiClick(params: {
 
   // Step 4 (optional): verify the click landed on the intended control.
   // ui.inspect at the clicked point returns the element actually under the
-  // cursor — its role/name — which we compare against the ui.find expectation.
+  // cursor 閳?its role/name 閳?which we compare against the ui.find expectation.
   // This closes the loop Codex/CUA-style agents use: OCR gives a pixel, but the
   // accessibility tree confirms the pixel maps to the right control, catching
   // the "right button, wrong screen" failure where a click lands mid-animation
@@ -997,7 +998,7 @@ async function runUiClick(params: {
  * `window.app` action: identify the foreground application and extract its icon.
  *
  * Lets the operator (and the model) *see which app* a screen operation will
- * touch — a visual aid for the approval step. dsh's approval popup renders only a
+ * touch 閳?a visual aid for the approval step. dsh's approval popup renders only a
  * text `reason`, so the icon is returned here as a PNG path the GUI can display,
  * while the textual identity (name/title/exe) goes in the normal result. Returns
  * the raw `window foreground` JSON plus `displayName` and `iconPath`.
@@ -1106,7 +1107,7 @@ function backgroundPlan(action: string, argv: readonly string[]): BackgroundPlan
     return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined
   }
   // `--title` / `--hwnd` name WHICH window to drive. Without one, the helper
-  // falls back to the foreground window — fine for "operateoperate what I'm looking
+  // falls back to the foreground window - fine for "operate what I'm looking
   // at", but parallel operation (drive app B while I use app A) needs it.
   const title = flag('--title')
   const hwndRaw = flag('--hwnd')
@@ -1160,7 +1161,7 @@ function withNote(data: unknown, note: Record<string, unknown>): JsonValue {
 /**
  * Resolve the on-screen rect of the window named by --hwnd/--title, so OCR can
  * be limited to it. Without this, a target-scoped click still searched the whole
- * screen and could match text outside the window — producing a point the
+ * screen and could match text outside the window 閳?producing a point the
  * out-of-bounds guard then refused.
  */
 async function resolveTargetRect(params: {
@@ -1190,7 +1191,7 @@ async function resolveTargetRect(params: {
 }
 
 /**
- * `probe` — read-only diagnosis of whether a window can be driven in the
+ * `probe` 閳?read-only diagnosis of whether a window can be driven in the
  * background. It enumerates child HWNDs and reports the deepest one at a point;
  * an app with no child windows (Chromium/Electron self-drawn surfaces) can only
  * receive messages on its top-level window, which is the main reason background
@@ -1255,7 +1256,7 @@ async function runProbe(params: {
       backgroundCapable: !topLevelOnly && childCount > 0,
       diagnosis:
         childCount === 0
-          ? 'This window exposes no child HWNDs — typical of self-drawn UI (Chromium/Electron/Qt). ' +
+          ? 'This window exposes no child HWNDs 閳?typical of self-drawn UI (Chromium/Electron/Qt). ' +
             'Background messages can only reach its top-level window and may be ignored. ' +
             'Prefer inputMode: real for this window, or verify the effect before trusting it.'
           : topLevelOnly
@@ -1293,7 +1294,7 @@ function parsePoint(raw: string | undefined): [number, number] | null {
  *
  * The result carries `cursorMoved` from the helper so the model and the operator
  * can see that the physical mouse was left alone. When the helper is
- * unavailable, the call fails loudly rather than quietly grabbing the cursor —
+ * unavailable, the call fails loudly rather than quietly grabbing the cursor 閳?
  * a background-mode deployment must never silently become a real-mouse one.
  */
 async function runBackground(params: {
@@ -1304,7 +1305,7 @@ async function runBackground(params: {
   action: string
 }): Promise<ToolValue> {
   const p = params.plan
-  // Typing without an explicit target resolves to the foreground window — which
+  // Typing without an explicit target resolves to the foreground window 閳?which
   // is whatever the user is actively using, so text would land in the document
   // or chat they are currently typing in. That is exactly the interference
   // background mode exists to avoid, so require --title/--hwnd for typing.
@@ -1317,7 +1318,7 @@ async function runBackground(params: {
       executed: false,
       blockedReason:
         'background typing needs an explicit target: pass --title <window title> or --hwnd <handle>. ' +
-        'Without one it would type into the foreground window — the app you are using right now.',
+        'Without one it would type into the foreground window 閳?the app you are using right now.',
       exitCode: null,
       data: { inputMode: 'background' } as unknown as JsonValue,
       text: null,
@@ -1351,7 +1352,7 @@ async function runBackground(params: {
 
   // The helper reports ok:false when it deliberately sent nothing (e.g. the
   // point falls outside the target window). Surface that as a failure with the
-  // reason — a "delivered nothing" result must not read as a successful click.
+  // reason 閳?a "delivered nothing" result must not read as a successful click.
   if (out.ok === false) {
     return {
       action: params.action,
@@ -1397,8 +1398,8 @@ const SELF_DRAWN_CLASS_PATTERNS = [
   'Chrome_WidgetWin_', // Chromium / Electron top-level
   'Qt5', // Qt 5
   'Qt6', // Qt 6
-  'CEF', // Chromium Embedded Framework (微信/QQ 等内嵌浏览器)
-  'Intermediate D3D Window', // WPF 自绘
+  'CEF', // Chromium Embedded Framework (瀵邦喕淇?QQ 缁涘鍞村畵灞剧セ鐟欏牆娅?
+  'Intermediate D3D Window', // WPF 閼奉亞绮?
 ]
 
 /**
@@ -1425,7 +1426,7 @@ function backgroundCaveat(out: Record<string, unknown>): Record<string, unknown>
  * Run one (already authorized) action.
  *
  * Shared by the direct path and by `window.confirm --approve`, so a stashed
- * action is delivered exactly the way it would have been had it run inline —
+ * action is delivered exactly the way it would have been had it run inline 閳?
  * including honoring `inputMode`. The single entry point is what keeps the
  * approval token from becoming a way around the background-input policy.
  */
@@ -1440,37 +1441,68 @@ async function dispatch(params: {
   const path = resolvePath(action)
   const tier = classify(path)
 
+  // Per-call mode override: `--input-mode real|background`. A window that cannot
+  // be driven by messages (self-drawn UI) would otherwise force a global config
+  // change just to click it once. The flag is stripped before the argv reaches
+  // the CLI.
+  const modeIdx = argv.indexOf('--input-mode')
+  let mode = config.inputMode
+  let restArgv = argv
+  if (modeIdx >= 0 && modeIdx + 1 < argv.length) {
+    const raw = (argv[modeIdx + 1] ?? '').toLowerCase()
+    if (raw === 'real' || raw === 'background') mode = raw
+    restArgv = argv.filter((_, i) => i !== modeIdx && i !== modeIdx + 1)
+  }
+  const effConfig: Config = { ...config, inputMode: mode }
+
   if (action === 'find_exact') {
-    return runFindExact({ cliPath, argv, config, tier, exec, action })
+    return runFindExact({ cliPath, argv: restArgv, config: effConfig, tier, exec, action })
   }
   if (action === 'ui.click') {
-    return runUiClick({ cliPath, argv, config, tier, exec, action })
+    return runUiClick({ cliPath, argv: restArgv, config: effConfig, tier, exec, action })
   }
   if (action === 'window.app') {
-    return runWindowApp({ cliPath, config, tier, exec, action })
+    return runWindowApp({ cliPath, config: effConfig, tier, exec, action })
   }
   if (action === 'probe') {
-    return runProbe({ cliPath, config, tier, exec, action, argv })
+    return runProbe({ cliPath, config: effConfig, tier, exec, action, argv: restArgv })
   }
 
-  const bg = backgroundPlan(action, argv)
-  if (bg && config.inputMode === 'background') {
-    return runBackground({ plan: bg, config, tier, exec, action })
+  const bg = backgroundPlan(action, restArgv)
+  if (bg && effConfig.inputMode === 'background') {
+    return runBackground({ plan: bg, config: effConfig, tier, exec, action })
   }
+
+  const usingBackground = bg !== null && effConfig.inputMode === 'background'
+
+  // `--hwnd`/`--title` are plugin-only: they tell background delivery WHICH
+  // window to target. The CLI does not understand them, so strip them whenever
+  // we are not the one consuming them.
+  const cliArgv = usingBackground
+    ? restArgv
+    : (() => {
+        const out: string[] = []
+        for (let i = 0; i < restArgv.length; i++) {
+          const a = restArgv[i]
+          if (a === '--hwnd' || a === '--title') { i++ ; continue } // drop flag + value
+          out.push(a as string)
+        }
+        return out
+      })()
 
   const outcome = await runCli({
     cliPath,
-    invocation: { path, args: argv },
+    invocation: { path, args: cliArgv },
     timeoutMs: config.timeoutMs,
     signal: exec.signal,
   })
 
   // `inputMode: background` promises the cursor is left alone, but only some
-  // actions can be delivered as messages. These ones cannot — they drive the
+  // actions can be delivered as messages. These ones cannot 閳?they drive the
   // physical mouse/keyboard. Say so on the result instead of letting a
   // background deployment assume nothing moved.
   const grabbedRealInput =
-    config.inputMode === 'background' && PHYSICAL_INPUT_ACTIONS.has(action)
+    effConfig.inputMode === 'background' && PHYSICAL_INPUT_ACTIONS.has(action)
   const note = grabbedRealInput
     ? {
         inputMode: 'background',
@@ -1517,14 +1549,14 @@ function buildDescription(config: Config): string {
   const list = (tier: RiskTier): string => ACTIONS[tier].join(', ')
   const policy = {
     always:
-      'Every call — including read-only ones — requires the user to approve it in the UI before the helper runs. A call the user does not approve returns without executing.',
+      'Every call 閳?including read-only ones 閳?requires the user to approve it in the UI before the helper runs. A call the user does not approve returns without executing.',
     mutating:
       'Actions that move the mouse, type, or change state require user approval before running; read-only actions run without asking.',
     never: 'This deployment runs every action without asking (approval: never).',
   }[config.approval]
 
   return [
-    'Control the local "屏幕自动化小助手" (ScreenAutomationHelper) to see and operate the Windows desktop: screenshot, OCR text recognition, locate on-screen text or images, read the UI element tree, and move the mouse / type / use the clipboard.',
+    'Control the local "鐏炲繐绠烽懛顏勫З閸栨牕鐨崝鈺傚" (ScreenAutomationHelper) to see and operate the Windows desktop: screenshot, OCR text recognition, locate on-screen text or images, read the UI element tree, and move the mouse / type / use the clipboard.',
     '',
     'Pass `action` plus a `args` array of CLI flags (one flag per element). This tool never runs a shell: each element is passed as a literal argument.',
     '',
@@ -1538,7 +1570,8 @@ function buildDescription(config: Config): string {
     'ui.click is the semantic path: pass --name (and optionally --role) to confirm a control exists in the UI tree by identity, then it auto-resolves the on-screen pixel via OCR and clicks it. Add --verify to re-inspect the clicked point and confirm it landed on the expected control (the same closed-loop check CUA/Codex-style agents use to avoid clicking the wrong element).',
     'ui.tree / ui.find / ui.inspect read the accessibility (UIA) tree: identity and hierarchy, not pixel geometry. SAH does not expose element bounding boxes via ui.find, so ui.click resolves a pixel via OCR; ui.inspect --point does return the element bounds/name under a cursor, which --verify relies on.',
     'Coordinates are absolute screen pixels; use screen.monitors to check the display layout first.',
-    'Before clicking a window you have not driven before, run `probe --hwnd <handle>` (read-only, sends no input). It reports backgroundCapable and a diagnosis: self-drawn UI (Chromium/Electron/Qt) exposes no child windows, so background messages may be ignored there and inputMode: real is the reliable path.',
+    'Before clicking a window you have not driven before, run `probe --hwnd <handle>` (read-only, sends no input). It reports backgroundCapable and a diagnosis: self-drawn UI (Chromium/Electron/Qt) exposes no child windows, so background messages may be ignored there.',
+    'Any input action accepts `--input-mode real|background` to override the configured mode for one call 鈥?use it to drive a self-drawn window without changing global config. In background mode the cursor is never moved; in real mode it is.',
     '',
     `CONFIRMATION GATE: this deployment sets confirm: ${config.confirm}. When "popup", every mutate action (mouse/keyboard/clipboard/workflow) is held until the operator approves it: the first call returns blockedReason "awaiting confirmation" with a confirmToken and the foreground app name in data. Surface a confirmation card (with the app icon) and call window.confirm --approve <token> to actually run it, or window.confirm --deny <token> to cancel. The real action never runs without that approve step. (dsh's own approval popup is disabled in sessions where approval prompts fail closed, so the plugin provides this gate itself.)`,
     '',
