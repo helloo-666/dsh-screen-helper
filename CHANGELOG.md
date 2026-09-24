@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.8
+
+- **`ui.click` no longer grabs the mouse.** It is the most accurate click path
+  (UIA identity + OCR + optional verify) and therefore the default choice, but it
+  still drove the physical cursor — so the main path kept taking your mouse. In
+  `inputMode: background` it now uses the same message-based delivery as
+  `mouse.click`.
+- **`--verify` is honestly skipped in background mode.** It inspects the element
+  under the *physical* cursor, which background mode never moves, so it would
+  confirm nothing. The result now carries `verifySkipped: true` plus a
+  `verifyNote` pointing at a read-based check instead of echoing a green tick.
+- Self-drawn UI caveat and out-of-bounds refusal apply to `ui.click` too.
+- Pinned `@deepseek-ai/schemastery` to `3.18.2`: `3.18.4` changed `SchemaOutput`
+  typing and broke the build.
+
 ## 0.1.7
 
 - **Out-of-bounds clicks are refused instead of silently succeeding.** A `--point` outside the
