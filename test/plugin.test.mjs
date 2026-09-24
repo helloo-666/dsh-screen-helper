@@ -204,6 +204,23 @@ test('ui.click is mutate-tier (prompts under always) and not concurrency-safe', 
   assert.equal(tool.isConcurrencySafe({ action: 'ui.click' }), false);
 });
 
+test('background typing refuses to target the foreground window implicitly', async () => {
+  // Without --title/--hwnd the helper resolves the foreground window — the app
+  // the user is actively using — so text would land in whatever they are typing.
+  // Background mode exists to avoid that, so it must demand an explicit target.
+  const { ctx, registered } = makeContext();
+  ctx.approval = { async request() { return 'allowed-once'; } };
+  apply(ctx, Config({ inputMode: 'background', confirm: 'off', approval: 'never', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+  const v = await tool.execute(
+    { action: 'keyboard.write', args: ['--text', 'hello'] },
+    { signal: new AbortController().signal, agent: undefined, callId: 'bg-type-guard' },
+  );
+  assert.equal(v.executed, false);
+  assert.match(v.blockedReason, /explicit target/);
+  assert.match(v.blockedReason, /foreground window/);
+});
+
 test('ui.click falls through to OCR when the UI tree does not confirm the control', async () => {
   // A fake CLI makes ui.find fail, which used to abort at the ui.find step.
   // Desktop icons and self-drawn apps (Electron/Qt) expose little or no UIA, so

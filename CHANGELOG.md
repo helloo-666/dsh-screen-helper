@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.11
+
+- **Background typing now requires an explicit target.** Without `--title` or
+  `--hwnd` the helper resolves the *foreground* window — the app you are actively
+  using — so text would be typed into the document or chat you are currently
+  writing in. That is precisely the interference background mode exists to
+  prevent, so it is refused with an explanation. Clicks are unaffected: they
+  target a point, and "click what I'm looking at" is a legitimate default.
+- 40 tests passing.
+
 ## 0.1.10
 
 - **`ui.click` no longer aborts when the UI tree does not confirm the control.**

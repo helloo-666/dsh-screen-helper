@@ -1029,6 +1029,27 @@ async function runBackground(params: {
   action: string
 }): Promise<ToolValue> {
   const p = params.plan
+  // Typing without an explicit target resolves to the foreground window — which
+  // is whatever the user is actively using, so text would land in the document
+  // or chat they are currently typing in. That is exactly the interference
+  // background mode exists to avoid, so require --title/--hwnd for typing.
+  // (A click is different: it targets a point, and refusing it would break the
+  // common "click what I'm looking at" case.)
+  if (p.kind === 'type' && p.title === undefined && p.hwnd === undefined) {
+    return {
+      action: params.action,
+      tier: params.tier,
+      executed: false,
+      blockedReason:
+        'background typing needs an explicit target: pass --title <window title> or --hwnd <handle>. ' +
+        'Without one it would type into the foreground window — the app you are using right now.',
+      exitCode: null,
+      data: { inputMode: 'background' } as unknown as JsonValue,
+      text: null,
+      stderr: null,
+    }
+  }
+
   const out = await runBackgroundInput({
     action: p.kind,
     ...(p.kind === 'click' ? { x: p.x, y: p.y } : {}),
