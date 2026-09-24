@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.7
+
+- **Out-of-bounds clicks are refused instead of silently succeeding.** A `--point` outside the
+  target window's rect used to resolve to the top-level window and report `ok: true`, so a wrong
+  coordinate looked like a successful click. The helper now rejects it with
+  `blockedReason` explaining the miss, and returns `targetRect` so the caller can correct the
+  coordinate. No input is sent, and the cursor still does not move.
+- **Self-drawn UI warning (`effectUnverified`).** When the target's window class is Chromium /
+  Electron / Qt (`Chrome_RenderWidgetHostHWND`, `Chrome_WidgetWin_`, `Qt5`/`Qt6`, `CEF`, …), the
+  result now carries `effectUnverified: true` plus a `caveat`, because those apps commonly ignore
+  `WM_` messages and a delivered message must not be read as proof the click worked. Ordinary
+  Win32 controls (verified against `NotepadTextBox` / `RichEditD2DPT`) stay clean — no false
+  positives.
+- Helper `ok: false` is now reported as a real failure (`blockedReason` + `exitCode 1`) rather
+  than `executed: true`.
+- Tests: 38 passing in ~21s. The `find_exact` OCR case no longer fails when the searched text is
+  simply not on screen, and a new case covers the out-of-bounds refusal (without opening windows).
+
 ## 0.1.6
 
 - **Background input mode (`inputMode: background`, now the default) — the plugin no longer

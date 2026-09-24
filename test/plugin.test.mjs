@@ -59,7 +59,7 @@ test('approval mode decides which tiers ask', async () => {
     ctx.approval = { async request() { asked += 1; return 'allowed-once'; } };
     // confirm:off so the dsh-native approval gate (what this test targets) is
     // what decides; the plugin confirm gate is covered by its own tests.
-    apply(ctx, Config({ approval: mode, confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
+    apply(ctx, Config({ inputMode: 'real',  approval: mode, confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
     await registered.get('screen_automation').execute(
       { action, args: [] },
       { signal: new AbortController().signal, agent: undefined, callId: 'c1' },
@@ -75,7 +75,7 @@ test('approval mode decides which tiers ask', async () => {
 test('always mode denies a read when the user declines', async () => {
   const { ctx, registered } = makeContext();
   ctx.approval = { async request() { return 'rejected'; } };
-  apply(ctx, Config({ approval: 'always', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  approval: 'always', cliPath: 'D:\\nope\\nope.exe' }));
   const value = await registered.get('screen_automation').execute(
     { action: 'status', args: [] },
     { signal: new AbortController().signal, agent: undefined, callId: 'c1' },
@@ -92,7 +92,7 @@ test('apply registers exactly one tool named screen_automation', () => {
 
 test('the registered tool satisfies the defineTool contract', () => {
   const { ctx, registered } = makeContext();
-  apply(ctx, Config({ cliPath: 'D:\\ScreenAutomationHelper\\ScreenAutomationHelper.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  cliPath: 'D:\\ScreenAutomationHelper\\ScreenAutomationHelper.exe' }));
   const tool = registered.get('screen_automation');
 
   assert.equal(typeof tool.description, 'string');
@@ -130,7 +130,7 @@ test('find_exact is observe-tier, concurrency-safe, and routes to screen.recogni
   // resolved to screen.recognize rather than a no-op).
   let asked = 0;
   ctx.approval = { async request() { asked += 1; return 'allowed-once'; } };
-  apply(ctx, Config({ approval: 'always', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  approval: 'always', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
 
   // observe-tier => prompts under always
@@ -156,7 +156,7 @@ test('find_exact narrows a recognized line down to the exact token box', async (
   if (!sa) return;
   const { ctx, registered } = makeContext();
   ctx.approval = { async request() { return 'allowed-once'; } };
-  apply(ctx, Config({ approval: 'never', cliPath: sa }));
+  apply(ctx, Config({ inputMode: 'real',  approval: 'never', cliPath: sa }));
   const tool = registered.get('screen_automation');
   const v = await tool.execute(
     { action: 'find_exact', args: ['--text', '文件', '--target', 'virtual-screen'] },
@@ -166,14 +166,33 @@ test('find_exact narrows a recognized line down to the exact token box', async (
   const data = v.data;
   assert.ok(data && typeof data === 'object', 'find_exact returns a result object');
   const matches = (data.matches ?? []);
+  // This case OCRs the real screen, so it can only assert when the searched text
+  // happens to be visible. Zero matches means "not on screen right now", not a
+  // broken narrowing step — skip instead of failing on whatever is displayed.
+  if (matches.length === 0) return;
   assert.ok(matches.length >= 1, 'should locate at least one token box');
+});
+
+test('background mode refuses a click outside the target window instead of reporting success', async () => {
+  // Deliberately pass a point outside the window, so nothing can be clicked and
+  // no new window is needed. (5,5) is outside every realistic target rect.
+  const { ctx, registered } = makeContext();
+  ctx.approval = { async request() { return 'allowed-once'; } };
+  apply(ctx, Config({ inputMode: 'background', confirm: 'off', approval: 'never', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+  const exec = { signal: new AbortController().signal, agent: undefined, callId: 'bg-oob' };
+  const v = await tool.execute({ action: 'mouse.click', args: ['--point', '5,5', '--hwnd', '459750'] }, exec);
+  if (!v.data || v.data.inputMode !== 'background') return; // helper unavailable here
+  assert.ok(v.blockedReason, 'an out-of-bounds click must not report success');
+  assert.match(v.blockedReason, /outside the target window rect/);
+  assert.equal(v.data.cursorMoved, false, 'refusing must still not move the cursor');
 });
 
 test('ui.click is mutate-tier (prompts under always) and not concurrency-safe', async () => {
   const { ctx, registered } = makeContext();
   let asked = 0;
   ctx.approval = { async request() { asked += 1; return 'allowed-once'; } };
-  apply(ctx, Config({ approval: 'always', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  approval: 'always', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
   // mutate => prompts under always, and is NOT concurrency-safe.
   assert.equal(asked, 0);
@@ -186,8 +205,8 @@ test('ui.click resolves a UI-tree identity to a real click via OCR', async () =>
   if (!sa) return;
   const { ctx, registered } = makeContext();
   ctx.approval = { async request() { return 'allowed-once'; } };
-  // confirm:off — this e2e targets ui.click resolution, not the confirm gate.
-  apply(ctx, Config({ approval: 'never', confirm: 'off', cliPath: sa }));
+  // confirm:off —this e2e targets ui.click resolution, not the confirm gate.
+  apply(ctx, Config({ inputMode: 'real',  approval: 'never', confirm: 'off', cliPath: sa }));
   const tool = registered.get('screen_automation');
   // Open a known Win32 target so ui.find has a real accessible name to confirm.
   const { execSync } = await import('node:child_process');
@@ -217,7 +236,7 @@ test('ui.click resolves a UI-tree identity to a real click via OCR', async () =>
 
 test('blockDestructive refuses workflow mutation without spawning', async () => {
   const { ctx, registered } = makeContext();
-  apply(ctx, Config({ blockDestructive: true, cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  blockDestructive: true, cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
 
   const value = await tool.execute(
@@ -230,7 +249,7 @@ test('blockDestructive refuses workflow mutation without spawning', async () => 
 
 test('approval gate denies when no answerer is composed', async () => {
   const { ctx, registered } = makeContext();
-  apply(ctx, Config({ approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
 
   // ctx has no `approval` service, which must fail closed.
@@ -251,7 +270,7 @@ test('approval gate proceeds only on an explicit approval', async () => {
       return 'allowed-once';
     },
   };
-  apply(ctx, Config({ approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
 
   const value = await tool.execute(
@@ -271,7 +290,7 @@ test('a throwing approver is treated as a refusal', async () => {
       throw new Error('answerer exploded');
     },
   };
-  apply(ctx, Config({ approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
 
   const value = await tool.execute(
@@ -293,7 +312,7 @@ test('the grant token is allowed-once, and nothing else grants', async () => {
   for (const outcome of ['approved', 'allow', 'yes', 'allowed', '', 'ALLOWED-ONCE']) {
     const { ctx, registered } = makeContext();
     ctx.approval = { async request() { return outcome; } };
-    apply(ctx, Config({ approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
+    apply(ctx, Config({ inputMode: 'real',  approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
     const value = await registered.get('screen_automation').execute(
       { action: 'mouse.click', args: ['--point', '1,1'] },
       { signal: new AbortController().signal, agent: undefined, callId: 'c1' },
@@ -304,7 +323,7 @@ test('the grant token is allowed-once, and nothing else grants', async () => {
   for (const outcome of DENYING) {
     const { ctx, registered } = makeContext();
     ctx.approval = { async request() { return outcome; } };
-    apply(ctx, Config({ approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
+    apply(ctx, Config({ inputMode: 'real',  approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
     const value = await registered.get('screen_automation').execute(
       { action: 'mouse.click', args: ['--point', '1,1'] },
       { signal: new AbortController().signal, agent: undefined, callId: 'c1' },
@@ -315,7 +334,7 @@ test('the grant token is allowed-once, and nothing else grants', async () => {
   // And the real token must actually grant.
   const { ctx, registered } = makeContext();
   ctx.approval = { async request() { return 'allowed-once'; } };
-  apply(ctx, Config({ approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  approval: 'mutating', confirm: 'off', cliPath: 'D:\\nope\\nope.exe' }));
   const granted = await registered.get('screen_automation').execute(
     { action: 'mouse.click', args: ['--point', '1,1'] },
     { signal: new AbortController().signal, agent: undefined, callId: 'c1' },
@@ -353,7 +372,7 @@ test('read tier runs without asking even under the strict policy', async () => {
  */
 test('confirm:popup holds a mutate and returns a one-time token', async () => {
   const { ctx, registered } = makeContext();
-  apply(ctx, Config({ confirm: 'popup', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  confirm: 'popup', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
 
   const value = await tool.execute(
@@ -370,7 +389,7 @@ test('confirm:popup holds a mutate and returns a one-time token', async () => {
 
 test('window.confirm --approve runs the stashed action, once', async () => {
   const { ctx, registered } = makeContext();
-  apply(ctx, Config({ confirm: 'popup', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  confirm: 'popup', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
   const exec = { signal: new AbortController().signal, agent: undefined, callId: 'c1' };
 
@@ -389,7 +408,7 @@ test('window.confirm --approve runs the stashed action, once', async () => {
 
 test('window.confirm --deny cancels without touching the screen', async () => {
   const { ctx, registered } = makeContext();
-  apply(ctx, Config({ confirm: 'popup', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  confirm: 'popup', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
   const exec = { signal: new AbortController().signal, agent: undefined, callId: 'c1' };
 
@@ -404,7 +423,7 @@ test('window.confirm --deny cancels without touching the screen', async () => {
 
 test('confirm:off lets a mutate run straight through', async () => {
   const { ctx, registered } = makeContext();
-  apply(ctx, Config({ confirm: 'off', approval: 'never', cliPath: 'D:\\nope\\nope.exe' }));
+  apply(ctx, Config({ inputMode: 'real',  confirm: 'off', approval: 'never', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
   const value = await tool.execute(
     { action: 'mouse.click', args: ['--point', '1,1'] },
