@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.14
+
+- **`ui.click --hwnd/--title` now searches only inside that window.** OCR used to
+  scan the whole screen, so a target-scoped click could match text outside the
+  window and then be refused by the out-of-bounds guard. In practice
+  `ui.click --name 编辑 --hwnd 723022` picked a token at the top of the screen
+  (178,16) for a window at (619,214,1721,760) and failed. Matches are now limited
+  to the target rect; the result reports `scopedToRect` and how many matches were
+  dropped (`scopedOut`).
+- **Ambiguity is reported instead of silently guessed.** Without UI-tree
+  confirmation the click is only an OCR guess, so when several tokens matched,
+  taking the first one could hit the wrong element. The result now carries
+  `ocrAmbiguous`, `ocrMatchCount` and `ocrAlternatives`.
+- Fixed a mojibake character that had crept back into a source comment.
+
 ## 0.1.13
 
 - **`--verify` works in background mode again, by observation instead of

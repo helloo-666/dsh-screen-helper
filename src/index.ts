@@ -684,13 +684,44 @@ async function runUiClick(params: {
     }
   }
   const items = (rec.json as { items?: unknown } | undefined)?.items
-  const ranked = findExact(
+  let ranked = findExact(
     Array.isArray(items)
       ? (items as Array<{ text: string; confidence: number; box: number[]; center: number[] }>)
       : [],
     query,
   )
+
+  // When the caller scoped the click to a window, only accept text inside it.
+  // Otherwise the whole screen is searched and the first match may sit outside
+  // the target — which the out-of-bounds guard then rightly refuses.
+  const scopeRect = await resolveTargetRect({
+    cliPath: params.cliPath,
+    hwnd: numericFlag(argv, '--hwnd'),
+    title: flagValue(argv, '--title'),
+    timeoutMs: params.config.timeoutMs,
+    signal: params.exec.signal,
+  })
+  let scopedOut = 0
+  if (scopeRect) {
+    const [x1, y1, x2, y2] = scopeRect
+    const before = ranked.matches.length
+    const inside = ranked.matches.filter((m) => {
+      const cx = m.center[0] ?? 0
+      const cy = m.center[1] ?? 0
+      return cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2
+    })
+    scopedOut = before - inside.length
+    if (inside.length > 0) ranked = { query: ranked.query, count: inside.length, matches: inside }
+  }
   const target = ranked.matches[0]
+  // With no UI-tree confirmation the click is only a guess from OCR. If several
+  // on-screen tokens matched, silently taking the first one can hit the wrong
+  // element — report the count and the alternatives so the caller knows.
+  const ocrMatchCount = ranked.matches.length
+  const ocrAmbiguous = !identityConfirmed && ocrMatchCount > 1
+  const ocrAlternatives = ocrAmbiguous
+    ? ranked.matches.slice(0, 5).map((m) => ({ text: m.text, center: m.center }))
+    : []
   if (!target) {
     return {
       action: params.action,
@@ -741,6 +772,8 @@ async function runUiClick(params: {
       button,
       inputMode: 'background',
       identityConfirmed,
+      ...(scopeRect ? { scopedToRect: scopeRect, scopedOut } : {}),
+      ...(ocrAmbiguous ? { ocrAmbiguous: true, ocrMatchCount, ocrAlternatives } : {}),
     } as Record<string, unknown>
     if (!bgClick) {
       return {
@@ -827,6 +860,7 @@ async function runUiClick(params: {
     center,
     button,
     identityConfirmed,
+    ...(ocrAmbiguous ? { ocrAmbiguous: true, ocrMatchCount, ocrAlternatives } : {}),
   }
 
   // Step 4 (optional): verify the click landed on the intended control.
@@ -1007,7 +1041,7 @@ function backgroundPlan(action: string, argv: readonly string[]): BackgroundPlan
     return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined
   }
   // `--title` / `--hwnd` name WHICH window to drive. Without one, the helper
-  // falls back to the foreground window — fine for "operate what I'm looking
+  // falls back to the foreground window — fine for "operateoperate what I'm looking
   // at", but parallel operation (drive app B while I use app A) needs it.
   const title = flag('--title')
   const hwndRaw = flag('--hwnd')
@@ -1056,6 +1090,38 @@ function withNote(data: unknown, note: Record<string, unknown>): JsonValue {
     return { ...(data as Record<string, unknown>), ...note } as unknown as JsonValue
   }
   return { value: data ?? null, ...note } as unknown as JsonValue
+}
+
+/**
+ * Resolve the on-screen rect of the window named by --hwnd/--title, so OCR can
+ * be limited to it. Without this, a target-scoped click still searched the whole
+ * screen and could match text outside the window — producing a point the
+ * out-of-bounds guard then refused.
+ */
+async function resolveTargetRect(params: {
+  cliPath: string
+  hwnd?: number
+  title?: string
+  timeoutMs: number
+  signal: AbortSignal
+}): Promise<[number, number, number, number] | null> {
+  if (params.hwnd === undefined && params.title === undefined) return null
+  const list = await runCli({
+    cliPath: params.cliPath,
+    invocation: { path: ['window', 'list-visible'], args: [] },
+    timeoutMs: params.timeoutMs,
+    signal: params.signal,
+  })
+  const windows = (list.ok ? (list.json as { windows?: unknown } | undefined)?.windows : undefined)
+  if (!Array.isArray(windows)) return null
+  type Win = { handle?: number; title?: string; window_region?: number[] }
+  const hit = (windows as Win[]).find((w) => {
+    if (params.hwnd !== undefined) return w.handle === params.hwnd
+    return typeof w.title === 'string' && params.title !== undefined &&
+      w.title.toLowerCase().includes(params.title.toLowerCase())
+  })
+  const r = hit?.window_region
+  return Array.isArray(r) && r.length === 4 ? (r as [number, number, number, number]) : null
 }
 
 /** Read `--name <value>` from argv, or undefined. */
