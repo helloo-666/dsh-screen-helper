@@ -33,7 +33,7 @@
   Explicit target window handle; overrides -Title.
 #>
 param(
-  [Parameter(Mandatory = $true)][ValidateSet('click', 'type', 'key')][string]$Action,
+  [Parameter(Mandatory = $true)][ValidateSet('click', 'type', 'key', 'probe')][string]$Action,
   [int]$X = 0,
   [int]$Y = 0,
   [string]$Text = '',
@@ -72,6 +72,13 @@ public class BI {
   public static bool EnumCbImpl(IntPtr h, IntPtr l) {
     if (IsWindowVisible(h)) Windows.Add(h);
     return true;
+  }
+  // Read-only: list the visible child windows of a handle, for probing whether a
+  // self-drawn app exposes real child HWNDs that can receive messages.
+  public static List<IntPtr> Children(IntPtr parent) {
+    Windows.Clear();
+    EnumChildWindows(parent, new EnumCb(EnumCbImpl), IntPtr.Zero);
+    return new List<IntPtr>(Windows);
   }
   public static IntPtr FindByTitle(string needle) {
     Windows.Clear();
@@ -151,6 +158,29 @@ try {
   if ($target -eq [IntPtr]::Zero) { throw 'could not resolve a target window' }
   $result.hwnd = $target.ToInt64()
   $result.hwndClass = [BI]::ClassOf($target)
+
+  # 1b. Probe mode: read-only. Enumerate the target's child windows and report
+  # their classes plus whether the deepest child at a point is a self-drawn
+  # surface. Sends NO messages, so it is safe to run against anything.
+  if ($Action -eq 'probe') {
+    $result.ok = $true
+    $kids = [BI]::Children($target)
+    $result.childCount = $kids.Count
+    $result.children = @($kids | Select-Object -First 12 | ForEach-Object {
+      @{ hwnd = $_.ToInt64(); class = [BI]::ClassOf($_) }
+    })
+    if ($X -ne 0 -or $Y -ne 0) {
+      $pt = New-Object BI+POINT
+      $pt.X = $X; $pt.Y = $Y
+      $deep = [BI]::RealChildWindowFromPoint($target, $pt)
+      $result.deepChildHwnd = $deep.ToInt64()
+      $result.deepChildClass = [BI]::ClassOf($deep)
+      $result.deepChildIsTopLevel = ($deep -eq $target)
+    }
+    $result.cursorBefore = $null
+    $result | ConvertTo-Json -Compress -Depth 4
+    exit 0
+  }
 
   # 2. Remember where the user's cursor is, so we can prove we did not move it.
   $before = Get-CursorPos

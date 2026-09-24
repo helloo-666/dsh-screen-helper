@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.15
+
+- **New read-only action `probe`: check whether a window can be driven in the
+  background before clicking it.** It enumerates child HWNDs and reports the
+  deepest window at an optional `--point`, then returns `backgroundCapable` plus a
+  `diagnosis`. Probing a Chromium window returned `childCount: 0` — self-drawn UI
+  (Chromium/Electron/Qt) exposes no child windows, so background messages can only
+  reach its top-level window and may be ignored. A standard Win32 window returned
+  15. Sends no input, so it is safe to run against anything; requires `--hwnd` or
+  `--title`.
+
 ## 0.1.14
 
 - **`ui.click --hwnd/--title` now searches only inside that window.** OCR used to

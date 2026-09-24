@@ -204,6 +204,21 @@ test('ui.click is mutate-tier (prompts under always) and not concurrency-safe', 
   assert.equal(tool.isConcurrencySafe({ action: 'ui.click' }), false);
 });
 
+test('probe reports whether a window can be driven in the background', async () => {
+  // Self-drawn apps (Chromium/Electron/Qt) expose no child HWNDs, so messages can
+  // only reach their top-level window and may be ignored. probe must say so
+  // before a click is attempted, not after it silently does nothing.
+  const { ctx, registered } = makeContext();
+  ctx.approval = { async request() { return 'allowed-once'; } };
+  apply(ctx, Config({ inputMode: 'background', confirm: 'off', approval: 'never', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+  const exec = { signal: new AbortController().signal, agent: undefined, callId: 'probe' };
+  // No target: refuse rather than probing the foreground window implicitly.
+  const none = await tool.execute({ action: 'probe', args: [] }, exec);
+  assert.equal(none.executed, false);
+  assert.match(none.blockedReason, /needs a target/);
+});
+
 test('background mode flags actions that still use the physical mouse/keyboard', async () => {
   // mouse.click and keyboard.write are message-deliverable; scrolling, dragging
   // and hotkeys are not. Under inputMode: background the latter still grab the

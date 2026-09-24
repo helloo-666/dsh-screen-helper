@@ -127,6 +127,7 @@ const ACTIONS: Record<RiskTier, readonly string[]> = {
     'locator.find',
     'locator.wait',
     'task.status',
+    'probe',
   ],
   observe: [
     'screen.capture',
@@ -1124,6 +1125,85 @@ async function resolveTargetRect(params: {
   return Array.isArray(r) && r.length === 4 ? (r as [number, number, number, number]) : null
 }
 
+/**
+ * `probe` — read-only diagnosis of whether a window can be driven in the
+ * background. It enumerates child HWNDs and reports the deepest one at a point;
+ * an app with no child windows (Chromium/Electron self-drawn surfaces) can only
+ * receive messages on its top-level window, which is the main reason background
+ * input silently fails. Run this before clicking an unfamiliar window instead of
+ * discovering it after the click does nothing.
+ */
+async function runProbe(params: {
+  cliPath: string
+  config: Config
+  tier: RiskTier
+  exec: { signal: AbortSignal }
+  action: string
+  argv: readonly string[]
+}): Promise<ToolValue> {
+  const { argv } = params
+  const hwnd = numericFlag(argv, '--hwnd')
+  const title = flagValue(argv, '--title')
+  const point = parsePoint(flagValue(argv, '--point') ?? '')
+  if (hwnd === undefined && title === undefined) {
+    return {
+      action: params.action,
+      tier: params.tier,
+      executed: false,
+      blockedReason:
+        'probe needs a target: pass --hwnd <handle> or --title <window title>. ' +
+        'Optionally --point "x,y" to see which child window sits at that coordinate.',
+      exitCode: null,
+      data: null,
+      text: null,
+      stderr: null,
+    }
+  }
+  const out = await runBackgroundInput({
+    action: 'probe',
+    ...(point ? { x: point[0], y: point[1] } : {}),
+    title,
+    hwnd,
+    timeoutMs: params.config.timeoutMs,
+  })
+  if (!out) {
+    return {
+      action: params.action,
+      tier: params.tier,
+      executed: false,
+      blockedReason: 'background input helper unavailable; cannot probe',
+      exitCode: null,
+      data: null,
+      text: null,
+      stderr: null,
+    }
+  }
+  const childCount = typeof out.childCount === 'number' ? out.childCount : 0
+  const topLevelOnly = out.deepChildIsTopLevel === true
+  return {
+    action: params.action,
+    tier: params.tier,
+    executed: true,
+    blockedReason: null,
+    exitCode: 0,
+    data: {
+      ...out,
+      backgroundCapable: !topLevelOnly && childCount > 0,
+      diagnosis:
+        childCount === 0
+          ? 'This window exposes no child HWNDs — typical of self-drawn UI (Chromium/Electron/Qt). ' +
+            'Background messages can only reach its top-level window and may be ignored. ' +
+            'Prefer inputMode: real for this window, or verify the effect before trusting it.'
+          : topLevelOnly
+            ? 'A point was given but the deepest window there is the top level itself; ' +
+              'the click may land on the wrong layer.'
+            : 'This window has real child windows, so background message delivery can target them.',
+    } as unknown as JsonValue,
+    text: null,
+    stderr: null,
+  }
+}
+
 /** Read `--name <value>` from argv, or undefined. */
 function flagValue(argv: readonly string[], name: string): string | undefined {
   const i = argv.indexOf(name)
@@ -1304,6 +1384,9 @@ async function dispatch(params: {
   }
   if (action === 'window.app') {
     return runWindowApp({ cliPath, config, tier, exec, action })
+  }
+  if (action === 'probe') {
+    return runProbe({ cliPath, config, tier, exec, action, argv })
   }
 
   const bg = backgroundPlan(action, argv)

@@ -435,7 +435,7 @@ export async function resolveForegroundApp(
  * Returns null when the script cannot be located or produces no JSON.
  */
 export async function runBackgroundInput(params: {
-  action: 'click' | 'type' | 'key'
+  action: 'click' | 'type' | 'key' | 'probe'
   x?: number
   y?: number
   text?: string
