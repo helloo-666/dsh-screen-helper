@@ -24,7 +24,7 @@ importers:
         specifier: 0.1.5-rc.2
         version: 0.1.5-rc.2(@deepseek-ai/cordis@4.0.2)
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.2
+        specifier: 3.18.2
         version: 3.18.2
       '@types/node':
         specifier: ^22.19.0
