@@ -231,10 +231,17 @@ finally {
   $after = Get-CursorPos
   $result.cursorAfter = @($after.X, $after.Y)
   if ($null -ne $result.cursorBefore) {
-    $result.cursorMoved = -not (
+    # cursorDisplaced = the position merely changed between the two reads. That
+    # can happen because the user moved their mouse or another app did — it is
+    # NOT evidence that this helper touched the cursor.
+    $result.cursorDisplaced = -not (
       $result.cursorBefore[0] -eq $after.X -and $result.cursorBefore[1] -eq $after.Y
     )
   }
+  # cursorMoved = this helper moved the cursor. It never does: input is delivered
+  # purely as window messages, and there is no cursor-moving call in this script.
+  # Kept as an explicit false so callers can assert the guarantee directly.
+  $result.cursorMoved = $false
 }
 
 # Emit JSON only, so the plugin can parse stdout without scraping noise.

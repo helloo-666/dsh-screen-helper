@@ -152,6 +152,10 @@ test('find_exact narrows a recognized line down to the exact token box', async (
   // Drive the computed action directly through the helper with a fake CLI by
   // intercepting runCli is not exposed, so instead we verify the documented
   // behavior end-to-end via the live helper when present; otherwise skip.
+  // This case OCRs the real screen (~15-25s) and depends on what happens to be
+  // displayed, so it is opt-in: run with SAH_E2E=1. Off by default to keep the
+  // suite fast and deterministic.
+  if (!process.env.SAH_E2E) return;
   const sa = process.env.SAH_CLI ?? 'D:\\ScreenAutomationHelper\\ScreenAutomationHelper.exe';
   if (!sa) return;
   const { ctx, registered } = makeContext();
@@ -201,6 +205,9 @@ test('ui.click is mutate-tier (prompts under always) and not concurrency-safe', 
 });
 
 test('ui.click resolves a UI-tree identity to a real click via OCR', async () => {
+  // Also OCRs the real screen and depends on the live UI tree, so opt-in with
+  // SAH_E2E=1 for the same reason as the find_exact case.
+  if (!process.env.SAH_E2E) return;
   const sa = process.env.SAH_CLI ?? 'D:\\ScreenAutomationHelper\\ScreenAutomationHelper.exe';
   if (!sa) return;
   const { ctx, registered } = makeContext();

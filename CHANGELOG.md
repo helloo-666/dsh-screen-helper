@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.9
+
+- **`cursorMoved` no longer produces false alarms.** It was computed by comparing
+  the cursor position before and after the call, so moving your own mouse during
+  a background click reported `cursorMoved: true` — as if the plugin had grabbed
+  the mouse, which it never did. `cursorMoved` is now a literal `false` (this
+  helper contains no cursor-moving call at all), and the observation moved to a
+  separate `cursorDisplaced` flag that means "the position changed between the
+  two reads", which the user or another app can cause.
+- Tests: the two cases that OCR the real screen are now opt-in via `SAH_E2E=1`.
+  They took ~15-25s each and depended on whatever was displayed, which made the
+  suite slow and flaky. Suite: 38 passing in ~5s.
+
 ## 0.1.8
 
 - **`ui.click` no longer grabs the mouse.** It is the most accurate click path
