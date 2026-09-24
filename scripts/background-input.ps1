@@ -164,6 +164,17 @@ try {
     # window is occluded, because we never hit-test the visible desktop.
     $wr = New-Object BI+RECT
     [void][BI]::GetWindowRect($target, [ref]$wr)
+    $result.targetRect = @($wr.L, $wr.T, $wr.R, $wr.B)
+
+    # Refuse a point outside the target window. Without this, the hit test
+    # silently resolves to the top-level window and the click lands on the wrong
+    # thing (or nowhere) while still reporting success.
+    if ($X -lt $wr.L -or $X -gt $wr.R -or $Y -lt $wr.T -or $Y -gt $wr.B) {
+      $result.ok = $false
+      $result.error = "point $X,$Y is outside the target window rect ($($wr.L),$($wr.T),$($wr.R),$($wr.B)); no input was sent"
+      return $result | ConvertTo-Json -Compress
+    }
+
     $winPt = New-Point ($X - $wr.L) ($Y - $wr.T)
     $child = [BI]::RealChildWindowFromPoint($target, $winPt)
     if ($child -eq [IntPtr]::Zero) { $child = $target }

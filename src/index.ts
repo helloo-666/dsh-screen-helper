@@ -971,6 +971,22 @@ async function runBackground(params: {
     }
   }
 
+  // The helper reports ok:false when it deliberately sent nothing (e.g. the
+  // point falls outside the target window). Surface that as a failure with the
+  // reason — a "delivered nothing" result must not read as a successful click.
+  if (out.ok === false) {
+    return {
+      action: params.action,
+      tier: params.tier,
+      executed: true,
+      blockedReason: typeof out.error === 'string' ? out.error : 'background input was not delivered',
+      exitCode: 1,
+      data: { inputMode: 'background', ...out } as unknown as JsonValue,
+      text: null,
+      stderr: null,
+    }
+  }
+
   return {
     action: params.action,
     tier: params.tier,
@@ -980,9 +996,50 @@ async function runBackground(params: {
     data: {
       inputMode: 'background',
       ...out,
+      // Honesty about reach: a window message can be "delivered" and still be
+      // ignored. Self-drawn UIs (Chromium / Electron / Qt) often listen for raw
+      // input instead of WM_*, so a background click there can silently do
+      // nothing. Say so rather than letting `ok: true` read as proof it worked.
+      ...backgroundCaveat(out),
     } as unknown as JsonValue,
     text: null,
     stderr: null,
+  }
+}
+
+/**
+ * Window classes that paint themselves and commonly ignore WM_* input.
+ *
+ * These are Chromium/Electron/Qt rendering surfaces: the message reaches the
+ * HWND, but the app's own event loop listens for raw input (or synthesizes
+ * clicks elsewhere), so nothing happens.
+ */
+const SELF_DRAWN_CLASS_PATTERNS = [
+  'Chrome_RenderWidgetHostHWND', // Chromium / Electron renderer
+  'Chrome_WidgetWin_', // Chromium / Electron top-level
+  'Qt5', // Qt 5
+  'Qt6', // Qt 6
+  'CEF', // Chromium Embedded Framework (微信/QQ 等内嵌浏览器)
+  'Intermediate D3D Window', // WPF 自绘
+]
+
+/**
+ * Flag a background delivery that may not have had an effect.
+ *
+ * Returns {} for ordinary message-driven windows, so the common success result
+ * stays clean and only genuinely risky targets carry the caveat.
+ */
+function backgroundCaveat(out: Record<string, unknown>): Record<string, unknown> {
+  const classes = [out.childClass, out.hwndClass].filter((c): c is string => typeof c === 'string')
+  const hit = SELF_DRAWN_CLASS_PATTERNS.find((p) => classes.some((c) => c.includes(p)))
+  if (!hit) return {}
+  return {
+    effectUnverified: true,
+    caveat:
+      `target window class "${hit}" is a self-drawn UI (Chromium/Electron/Qt). ` +
+      'Background window messages are often ignored by these apps, so this input may have had no effect. ' +
+      'Verify with a read (screen.recognize / ui.tree) before assuming it worked, ' +
+      'or use inputMode: real for this app (which moves the physical cursor).',
   }
 }
 
