@@ -204,6 +204,26 @@ test('ui.click is mutate-tier (prompts under always) and not concurrency-safe', 
   assert.equal(tool.isConcurrencySafe({ action: 'ui.click' }), false);
 });
 
+test('ui.click falls through to OCR when the UI tree does not confirm the control', async () => {
+  // A fake CLI makes ui.find fail, which used to abort at the ui.find step.
+  // Desktop icons and self-drawn apps (Electron/Qt) expose little or no UIA, so
+  // the tree being silent must not mean "cannot click" — we should reach OCR and
+  // report that identity was never confirmed.
+  const { ctx, registered } = makeContext();
+  ctx.approval = { async request() { return 'allowed-once'; } };
+  apply(ctx, Config({ inputMode: 'real', confirm: 'off', approval: 'never', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+  const v = await tool.execute(
+    { action: 'ui.click', args: ['--name', '某个按钮'] },
+    { signal: new AbortController().signal, agent: undefined, callId: 'uic-fallback' },
+  );
+  const data = v.data;
+  assert.ok(data && typeof data === 'object');
+  assert.notEqual(data.step, 'ui.find', 'must not abort at ui.find when there is text to OCR');
+  assert.equal(data.step, 'screen.recognize');
+  assert.equal(data.identityConfirmed, false);
+});
+
 test('ui.click resolves a UI-tree identity to a real click via OCR', async () => {
   // Also OCRs the real screen and depends on the live UI tree, so opt-in with
   // SAH_E2E=1 for the same reason as the find_exact case.

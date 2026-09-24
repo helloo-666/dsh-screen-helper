@@ -621,7 +621,13 @@ async function runUiClick(params: {
   const status = typeof findJson?.status === 'string' ? findJson.status : 'not_found'
   const count = typeof findJson?.count === 'number' ? findJson.count : 0
 
-  if (status !== 'matched' || count < 1) {
+  // The UI tree is often empty or unhelpful: desktop icons, Electron and other
+  // self-drawn apps expose little to no UIA. A silent tree therefore does not
+  // mean the control is absent, so fall through to the OCR step below and let
+  // the label itself decide — flagging that identity was never confirmed.
+  // Only bail here when there is no text to look for at all.
+  const identityConfirmed = status === 'matched' && count >= 1
+  if (!identityConfirmed && !name && !role) {
     return {
       action: params.action,
       tier: params.tier,
@@ -672,7 +678,7 @@ async function runUiClick(params: {
       executed: true,
       blockedReason: null,
       exitCode: rec.exitCode,
-      data: { step: 'screen.recognize', error: 'OCR failed' } as unknown as JsonValue,
+      data: { step: 'screen.recognize', error: 'OCR failed', identityConfirmed } as unknown as JsonValue,
       text: rec.message,
       stderr: rec.stderr,
     }
@@ -696,7 +702,10 @@ async function runUiClick(params: {
         step: 'find_exact',
         status,
         count,
-        error: `UI control "${query}" confirmed in tree, but no on-screen text matched it for clicking`,
+        error: identityConfirmed
+          ? `UI control "${query}" confirmed in tree, but no on-screen text matched it for clicking`
+          : `UI control "${query}" was not found in the UI tree, and no on-screen text matched it either`,
+        identityConfirmed,
       } as unknown as JsonValue,
       text: null,
       stderr: null,
@@ -731,6 +740,7 @@ async function runUiClick(params: {
       center,
       button,
       inputMode: 'background',
+      identityConfirmed,
     } as Record<string, unknown>
     if (!bgClick) {
       return {
@@ -781,6 +791,7 @@ async function runUiClick(params: {
     box: target.box,
     center,
     button,
+    identityConfirmed,
   }
 
   // Step 4 (optional): verify the click landed on the intended control.

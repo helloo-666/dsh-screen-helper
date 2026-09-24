@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.10
+
+- **`ui.click` no longer aborts when the UI tree does not confirm the control.**
+  It used to stop at the `ui.find` step, which made it unusable against desktop
+  icons, Electron and other self-drawn apps — those expose little or no UIA, so
+  a silent tree does not mean the control is missing. It now falls through to
+  OCR and reports `identityConfirmed: false`, so a caller can tell a confirmed
+  target from a best guess instead of getting a dead end.
+
 ## 0.1.9
 
 - **`cursorMoved` no longer produces false alarms.** It was computed by comparing
