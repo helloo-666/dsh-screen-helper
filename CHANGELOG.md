@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.6
+
+- **Background input mode (`inputMode: background`, now the default) — the plugin no longer
+  takes your mouse.** Mouse clicks and keyboard text are delivered as Win32 messages straight
+  to the target window's deepest child control instead of driving the physical cursor, so the
+  model can operate one window while you keep using your mouse and keep typing in the
+  foreground window. The result carries `cursorBefore` / `cursorAfter` / `cursorMoved`, so a
+  background operation can never silently become a cursor grab.
+- **New `scripts/background-input.ps1` helper**, shipped into `lib/scripts/` by the build
+  (`scripts/copy-helpers.mjs`) so installed copies keep it next to the JS that spawns it.
+  Resolves the deepest child via `RealChildWindowFromPoint`, and for typing falls back to a
+  heuristic edit-control search (`RichEdit` / `NotepadTextBox` / `TextBox`).
+- **`--title` / `--hwnd` targeting** for `mouse.click` and `keyboard.write`: name *which*
+  window to drive. Without one, the helper targets the foreground window — fine for
+  "operate what I'm looking at", but parallel operation needs the explicit target.
+- **`inputMode: 'background' | 'real'`.** `real` restores physical-cursor input for apps that
+  ignore window messages.
+- **Unified `dispatch()`** shared by the direct path and `window.confirm --approve`, so a
+  stashed action is delivered exactly as it would have been inline — an approval token can
+  no longer bypass `inputMode`.
+- Honest failure: if the helper is unavailable the call fails instead of quietly falling back
+  to the real cursor. `mouse.drag` and `scroll` are excluded from background mode (no message
+  equivalent) rather than being silently turned into no-ops.
+- Known boundary, documented in the README: background mode is reliable only for apps that
+  handle standard Windows messages. Self-drawn UIs (Electron / Chromium / Qt — B站 client,
+  微信, Chrome) often listen for raw input instead and may ignore `WM_` messages.
+
 ## 0.1.5
 
 - **Plugin-enforced confirmation gate (`confirm: popup`, now the default).** dsh's native

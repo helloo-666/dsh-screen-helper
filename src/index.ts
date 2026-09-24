@@ -30,6 +30,7 @@ import {
   isDestructive,
   resolveCliPath,
   resolveForegroundApp,
+  runBackgroundInput,
   runCli,
   stringifyForModel,
   type RiskTier,
@@ -61,11 +62,27 @@ export type ApprovalMode = 'always' | 'mutating' | 'never'
  */
 export type ConfirmMode = 'popup' | 'off'
 
+/**
+ * How screen input is delivered to the target application.
+ *
+ * - `background` (default) — input is sent as Win32 messages to the target
+ *   window's child control. The physical cursor never moves and keyboard focus
+ *   is never stolen, so the operator keeps using their own mouse while the
+ *   model drives another window. Only works on applications that handle
+ *   standard window messages; self-drawn UIs (Electron/Chrome/Qt) may ignore
+ *   them, and the plugin reports that honestly instead of silently
+ *   falling back to the real cursor.
+ * - `real` — moves the physical cursor via ScreenAutomationHelper (works
+ *   everywhere, but does take over the mouse).
+ */
+export type InputMode = 'background' | 'real'
+
 export interface Config {
   cliPath: string
   timeoutMs: number
   approval: ApprovalMode
   confirm: ConfirmMode
+  inputMode: InputMode
   blockDestructive: boolean
 }
 
@@ -76,6 +93,7 @@ export const Config: z<Config> = z.object({
     .union([z.const('always'), z.const('mutating'), z.const('never')])
     .default('never'),
   confirm: z.union([z.const('popup'), z.const('off')]).default('popup'),
+  inputMode: z.union([z.const('background'), z.const('real')]).default('background'),
   blockDestructive: z.boolean().default(false),
 })
 
@@ -404,53 +422,12 @@ export function apply(ctx: Context, config: Config): void {
           }
         }
 
-        // 3. Run it.
-        // 3. Computed actions: `find_exact` runs screen.recognize (already
-        //    approved above as observe-tier) and narrows the word-level OCR to
-        //    precise token boxes. Runs here so the approval gate is honored.
-        if (args.action === 'find_exact') {
-          return runFindExact({ cliPath, argv, config, tier, exec, action: args.action })
-        }
-        if (args.action === 'ui.click') {
-          return runUiClick({ cliPath, argv, config, tier, exec, action: args.action })
-        }
-        if (args.action === 'window.app') {
-          return runWindowApp({ cliPath, config, tier, exec, action: args.action })
-        }
         if (args.action === 'window.confirm') {
           return runWindowConfirm({ argv, exec })
         }
 
-        const outcome = await runCli({
-          cliPath,
-          invocation: { path, args: argv },
-          timeoutMs: config.timeoutMs,
-          signal: exec.signal,
-        })
-
-        if (!outcome.ok) {
-          return {
-            action: args.action,
-            tier,
-            executed: true,
-            blockedReason: null,
-            exitCode: outcome.exitCode,
-            data: null,
-            text: outcome.message,
-            stderr: outcome.stderr,
-          }
-        }
-
-        return {
-          action: args.action,
-          tier,
-          executed: true,
-          blockedReason: null,
-          exitCode: 0,
-          data: outcome.json ?? null,
-          text: outcome.json === undefined ? outcome.stdout : null,
-          stderr: null,
-        }
+        // 3. Run it (shared with the approve path so policies cannot diverge).
+        return dispatch({ action: args.action, argv, cliPath, config, exec })
       },
     }),
   )
@@ -897,21 +874,180 @@ async function runWindowConfirm(params: {
   }
   // approve: run the real action now.
   pendingActions.delete(token)
-  const outcome = await runCli({
-    cliPath: pending.cliPath,
-    invocation: { path: resolvePath(pending.action), args: [...pending.argv, '--token', token] },
-    timeoutMs: pending.config.timeoutMs,
-    signal: params.exec.signal,
-  })
-  return {
+  return dispatch({
     action: pending.action,
-    tier: pending.tier,
+    argv: pending.argv,
+    cliPath: pending.cliPath,
+    config: pending.config,
+    exec: params.exec,
+  })
+}
+
+/**
+ * Decide whether an action can be delivered as window messages, and how.
+ *
+ * Only plain input synthesis is eligible. Drag and scroll are deliberately
+ * excluded: they are defined by real cursor motion, so a message-based
+ * equivalent does not exist and pretending otherwise would be a silent
+ * no-op that looks like success.
+ */
+type BackgroundPlan =
+  | { kind: 'click'; x: number; y: number; title?: string; hwnd?: number }
+  | { kind: 'type'; text: string; title?: string; hwnd?: number }
+  | { kind: 'key'; key: number; title?: string; hwnd?: number }
+
+function backgroundPlan(action: string, argv: readonly string[]): BackgroundPlan | null {
+  const flag = (name: string): string | undefined => {
+    const i = argv.indexOf(name)
+    return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined
+  }
+  // `--title` / `--hwnd` name WHICH window to drive. Without one, the helper
+  // falls back to the foreground window — fine for "operate what I'm looking
+  // at", but parallel operation (drive app B while I use app A) needs it.
+  const title = flag('--title')
+  const hwndRaw = flag('--hwnd')
+  const hwnd = hwndRaw !== undefined && /^\d+$/.test(hwndRaw) ? Number(hwndRaw) : undefined
+  const target = { title, hwnd }
+
+  if (action === 'mouse.click') {
+    const pt = parsePoint(flag('--point'))
+    if (!pt) return null
+    return { kind: 'click', x: pt[0], y: pt[1], ...target }
+  }
+  if (action === 'keyboard.write') {
+    const text = flag('--text')
+    if (text === undefined) return null
+    return { kind: 'type', text, ...target }
+  }
+  if (action === 'keyboard.hotkey') return null
+  return null
+}
+
+/** Parse a "x,y" point string; null when malformed. */
+function parsePoint(raw: string | undefined): [number, number] | null {
+  if (!raw) return null
+  const m = /^\s*(-?\d+)\s*,\s*(-?\d+)\s*$/.exec(raw)
+  if (!m) return null
+  return [Number(m[1]), Number(m[2])]
+}
+
+/**
+ * Deliver input as window messages instead of moving the real cursor.
+ *
+ * The result carries `cursorMoved` from the helper so the model and the operator
+ * can see that the physical mouse was left alone. When the helper is
+ * unavailable, the call fails loudly rather than quietly grabbing the cursor —
+ * a background-mode deployment must never silently become a real-mouse one.
+ */
+async function runBackground(params: {
+  plan: BackgroundPlan
+  config: Config
+  tier: RiskTier
+  exec: { signal: AbortSignal }
+  action: string
+}): Promise<ToolValue> {
+  const p = params.plan
+  const out = await runBackgroundInput({
+    action: p.kind,
+    ...(p.kind === 'click' ? { x: p.x, y: p.y } : {}),
+    ...(p.kind === 'type' ? { text: p.text } : {}),
+    ...(p.kind === 'key' ? { key: p.key } : {}),
+    title: p.title,
+    hwnd: p.hwnd,
+    timeoutMs: params.config.timeoutMs,
+  })
+
+  if (!out) {
+    return {
+      action: params.action,
+      tier: params.tier,
+      executed: false,
+      blockedReason:
+        'background input helper unavailable; refusing to fall back to the real cursor while inputMode is "background"',
+      exitCode: null,
+      data: null,
+      text: null,
+      stderr: null,
+    }
+  }
+
+  return {
+    action: params.action,
+    tier: params.tier,
     executed: true,
     blockedReason: null,
-    exitCode: outcome.ok ? 0 : outcome.exitCode,
-    data: outcome.ok ? (outcome.json ?? null) : null,
-    text: outcome.ok ? null : outcome.message,
-    stderr: outcome.ok ? null : outcome.stderr,
+    exitCode: 0,
+    data: {
+      inputMode: 'background',
+      ...out,
+    } as unknown as JsonValue,
+    text: null,
+    stderr: null,
+  }
+}
+
+/**
+ * Run one (already authorized) action.
+ *
+ * Shared by the direct path and by `window.confirm --approve`, so a stashed
+ * action is delivered exactly the way it would have been had it run inline —
+ * including honoring `inputMode`. The single entry point is what keeps the
+ * approval token from becoming a way around the background-input policy.
+ */
+async function dispatch(params: {
+  action: string
+  argv: readonly string[]
+  cliPath: string
+  config: Config
+  exec: { signal: AbortSignal }
+}): Promise<ToolValue> {
+  const { action, argv, cliPath, config, exec } = params
+  const path = resolvePath(action)
+  const tier = classify(path)
+
+  if (action === 'find_exact') {
+    return runFindExact({ cliPath, argv, config, tier, exec, action })
+  }
+  if (action === 'ui.click') {
+    return runUiClick({ cliPath, argv, config, tier, exec, action })
+  }
+  if (action === 'window.app') {
+    return runWindowApp({ cliPath, config, tier, exec, action })
+  }
+
+  const bg = backgroundPlan(action, argv)
+  if (bg && config.inputMode === 'background') {
+    return runBackground({ plan: bg, config, tier, exec, action })
+  }
+
+  const outcome = await runCli({
+    cliPath,
+    invocation: { path, args: argv },
+    timeoutMs: config.timeoutMs,
+    signal: exec.signal,
+  })
+
+  if (outcome.ok) {
+    return {
+      action,
+      tier,
+      executed: true,
+      blockedReason: null,
+      exitCode: outcome.exitCode,
+      data: outcome.json ?? null,
+      text: outcome.json === undefined ? outcome.stdout : null,
+      stderr: null,
+    }
+  }
+  return {
+    action,
+    tier,
+    executed: true,
+    blockedReason: null,
+    exitCode: outcome.exitCode,
+    data: null,
+    text: outcome.message,
+    stderr: outcome.stderr,
   }
 }
 

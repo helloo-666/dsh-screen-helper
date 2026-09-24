@@ -17,7 +17,8 @@ import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /** Risk tier of one CLI subcommand path. */
 export type RiskTier =
@@ -421,6 +422,81 @@ export async function resolveForegroundApp(
   const displayName = (process ?? title ?? 'unknown app').replace(/\.exe$/i, '')
   const iconPath = exe ? extractIcon(exe) : null
   return { process, title, exe, displayName, iconPath }
+}
+
+/**
+ * Deliver one screen input WITHOUT moving the physical cursor.
+ *
+ * Delegates to `scripts/background-input.ps1`, which sends Win32 messages
+ * straight to the target window's child control. Returns the script's JSON
+ * envelope, notably `cursorMoved` — the caller is expected to surface that so a
+ * "background" operation can never silently become a cursor grab.
+ *
+ * Returns null when the script cannot be located or produces no JSON.
+ */
+export async function runBackgroundInput(params: {
+  action: 'click' | 'type' | 'key'
+  x?: number
+  y?: number
+  text?: string
+  key?: number
+  title?: string
+  hwnd?: number
+  timeoutMs: number
+}): Promise<Record<string, unknown> | null> {
+  const script = resolveScriptPath('background-input.ps1')
+  if (!script) return null
+  const argv: string[] = [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    script,
+    '-Action',
+    params.action,
+  ]
+  if (params.x !== undefined && params.y !== undefined) {
+    argv.push('-X', String(params.x), '-Y', String(params.y))
+  }
+  if (params.text !== undefined) argv.push('-Text', params.text)
+  if (params.key !== undefined) argv.push('-Key', String(params.key))
+  if (params.title !== undefined) argv.push('-Title', params.title)
+  if (params.hwnd !== undefined) argv.push('-Hwnd', String(params.hwnd))
+
+  try {
+    const r = spawnSync('powershell.exe', argv, {
+      timeout: Math.min(params.timeoutMs, 30_000),
+      windowsHide: true,
+      encoding: 'utf8',
+      maxBuffer: 4 * 1024 * 1024,
+    })
+    const raw = (r.stdout ?? '').trim()
+    if (!raw) return null
+    const start = raw.indexOf('{')
+    if (start < 0) return null
+    return JSON.parse(raw.slice(start)) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Locate a bundled helper script next to the built `lib/` output, whether we are
+ * running from `lib/` (installed) or `src/` (ts-node/dev).
+ */
+function resolveScriptPath(name: string): string | null {
+  // ESM has no __dirname; derive this file's directory from import.meta.url.
+  // `lib/scripts/` is where the build ships helpers (see scripts/copy-helpers.mjs).
+  const here = dirname(fileURLToPath(import.meta.url))
+  const candidates = [
+    join(here, 'scripts', name),
+    join(here, '..', 'scripts', name),
+  ]
+  for (const c of candidates) {
+    if (existsSync(c)) return c
+  }
+  return null
 }
 
 /** Extract an executable's associated icon to a temp PNG; null on any failure. */
