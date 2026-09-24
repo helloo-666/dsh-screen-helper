@@ -993,6 +993,36 @@ function backgroundPlan(action: string, argv: readonly string[]): BackgroundPlan
   return null
 }
 
+/**
+ * Actions that physically move the mouse or synthesise keystrokes, and which
+ * cannot be delivered as window messages. Under `inputMode: background` these
+ * still take the cursor / keyboard, so the result must say so.
+ */
+const PHYSICAL_INPUT_ACTIONS = new Set([
+  'mouse.move',
+  'mouse.down',
+  'mouse.up',
+  'mouse.long-press',
+  'mouse.drag',
+  'mouse.scroll',
+  'keyboard.hotkey',
+  'task.click',
+  'task.write',
+  'task.hotkey',
+  'task.drag',
+  'task.scroll',
+  'task.long-press',
+])
+
+/** Merge extra keys into a CLI JSON payload, wrapping it when it is not an object. */
+function withNote(data: unknown, note: Record<string, unknown>): JsonValue {
+  if (Object.keys(note).length === 0) return data as JsonValue
+  if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
+    return { ...(data as Record<string, unknown>), ...note } as unknown as JsonValue
+  }
+  return { value: data ?? null, ...note } as unknown as JsonValue
+}
+
 /** Read `--name <value>` from argv, or undefined. */
 function flagValue(argv: readonly string[], name: string): string | undefined {
   const i = argv.indexOf(name)
@@ -1187,6 +1217,23 @@ async function dispatch(params: {
     signal: exec.signal,
   })
 
+  // `inputMode: background` promises the cursor is left alone, but only some
+  // actions can be delivered as messages. These ones cannot — they drive the
+  // physical mouse/keyboard. Say so on the result instead of letting a
+  // background deployment assume nothing moved.
+  const grabbedRealInput =
+    config.inputMode === 'background' && PHYSICAL_INPUT_ACTIONS.has(action)
+  const note = grabbedRealInput
+    ? {
+        inputMode: 'background',
+        usedPhysicalInput: true,
+        caveat:
+          `"${action}" cannot be delivered as window messages, so this call moved the physical ` +
+          'mouse/keyboard despite inputMode: background. Only mouse.click and keyboard.write ' +
+          '(with --title/--hwnd) are background-capable. Expect your cursor to have moved.',
+      }
+    : {}
+
   if (outcome.ok) {
     return {
       action,
@@ -1194,7 +1241,7 @@ async function dispatch(params: {
       executed: true,
       blockedReason: null,
       exitCode: outcome.exitCode,
-      data: outcome.json ?? null,
+      data: withNote(outcome.json ?? null, note),
       text: outcome.json === undefined ? outcome.stdout : null,
       stderr: null,
     }
@@ -1205,7 +1252,7 @@ async function dispatch(params: {
     executed: true,
     blockedReason: null,
     exitCode: outcome.exitCode,
-    data: null,
+    data: Object.keys(note).length > 0 ? (note as unknown as JsonValue) : null,
     text: outcome.message,
     stderr: outcome.stderr,
   }

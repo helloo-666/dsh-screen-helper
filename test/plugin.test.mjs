@@ -204,6 +204,21 @@ test('ui.click is mutate-tier (prompts under always) and not concurrency-safe', 
   assert.equal(tool.isConcurrencySafe({ action: 'ui.click' }), false);
 });
 
+test('background mode flags actions that still use the physical mouse/keyboard', async () => {
+  // mouse.click and keyboard.write are message-deliverable; scrolling, dragging
+  // and hotkeys are not. Under inputMode: background the latter still grab the
+  // real input, so the result has to admit it rather than looking background-safe.
+  const { ctx, registered } = makeContext();
+  ctx.approval = { async request() { return 'allowed-once'; } };
+  apply(ctx, Config({ inputMode: 'background', confirm: 'off', approval: 'never', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+  const exec = { signal: new AbortController().signal, agent: undefined, callId: 'bg-phys' };
+  const v = await tool.execute({ action: 'mouse.scroll', args: ['--point', '10,10', '--amount', '1'] }, exec);
+  assert.equal(v.data.usedPhysicalInput, true);
+  assert.match(v.data.caveat, /mouse\.scroll/);
+  assert.match(v.data.caveat, /moved the physical/);
+});
+
 test('background typing refuses to target the foreground window implicitly', async () => {
   // Without --title/--hwnd the helper resolves the foreground window — the app
   // the user is actively using — so text would land in whatever they are typing.

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.12
+
+- **Background mode now admits which actions still grab your mouse.**
+  `inputMode: background` was honest for `mouse.click` and `keyboard.write`, but
+  `mouse.scroll` / `mouse.drag` / `mouse.move` / `keyboard.hotkey` and the
+  `task.*` input actions cannot be delivered as window messages — they drove the
+  physical cursor while the deployment claimed otherwise. Those results now carry
+  `usedPhysicalInput: true` plus a `caveat` naming the action, on both success and
+  failure paths. 41 tests passing.
+
 ## 0.1.11
 
 - **Background typing now requires an explicit target.** Without `--title` or
