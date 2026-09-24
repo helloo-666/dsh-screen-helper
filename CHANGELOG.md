@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.13
+
+- **`--verify` works in background mode again, by observation instead of
+  inspection.** It used to be reported as skipped, because `ui.inspect --point`
+  reads the element under the physical cursor — which background mode never
+  moves. Probing showed `ui.inspect --point` is unavailable here anyway, so
+  skipping it left no feedback at all. Background `--verify` now re-reads the
+  screen and diffs the OCR text, reporting `changesDetected` plus what was
+  added/removed, under `verifyMethod: "ocr-diff"`.
+- That verification is deliberately weaker than the real thing and says so: a
+  change means the click did *something*, not that it hit the right control, and
+  an unchanged screen does not prove failure.
+
 ## 0.1.12
 
 - **Background mode now admits which actions still grab your mouse.**

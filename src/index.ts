@@ -758,21 +758,56 @@ async function runUiClick(params: {
         text: null, stderr: null,
       }
     }
-    // `--verify` inspects whatever sits under the REAL cursor, which background
-    // mode never moves — it would confirm nothing. Say so instead of echoing a
-    // green checkmark.
+    // `--verify` normally re-inspects the element under the REAL cursor, which
+    // background mode never moves — but ui.inspect --point is also unavailable
+    // here, so skipping outright would leave no signal at all. Instead verify by
+    // observation: OCR the same region again and report whether anything changed.
+    // That cannot prove the right control was hit, so it is labelled as such.
     const verifyRequested = argv.includes('--verify')
+    let verify: Record<string, unknown> = {}
+    if (verifyRequested) {
+      const after = await runCli({
+        cliPath: params.cliPath,
+        invocation: { path: ['screen', 'recognize'], args: recArgs },
+        timeoutMs: params.config.timeoutMs,
+        signal: params.exec.signal,
+      })
+      if (after.ok) {
+        const afterItems = (after.json as { items?: unknown } | undefined)?.items
+        const afterTexts = new Set(
+          (Array.isArray(afterItems) ? (afterItems as Array<{ text: string }>) : []).map(
+            (i) => i.text,
+          ),
+        )
+        const beforeTexts = new Set(
+          (Array.isArray(items) ? (items as Array<{ text: string }>) : []).map((i) => i.text),
+        )
+        const added = [...afterTexts].filter((t) => !beforeTexts.has(t))
+        const removed = [...beforeTexts].filter((t) => !afterTexts.has(t))
+        verify = {
+          verifyMethod: 'ocr-diff',
+          verifySkipped: false,
+          changesDetected: added.length + removed.length,
+          added: added.slice(0, 5),
+          removed: removed.slice(0, 5),
+          verifyNote:
+            'Verified by re-reading the screen and diffing OCR text (ui.inspect cannot be used ' +
+            'in background mode). A change means the click did something; it does NOT confirm ' +
+            'the right control was hit, and an unchanged screen does not prove failure.',
+        }
+      } else {
+        verify = {
+          verifyMethod: 'ocr-diff',
+          verifySkipped: true,
+          verifyNote: 'Could not re-read the screen to verify; the click was still delivered.',
+        }
+      }
+    }
     return {
       action: params.action, tier: params.tier, executed: true,
       blockedReason: null, exitCode: 0,
       data: {
-        step: 'clicked', ...baseBg, ...bgClick, ...backgroundCaveat(bgClick),
-        ...(verifyRequested
-          ? {
-              verifySkipped: true,
-              verifyNote: '--verify inspects the element under the physical cursor, which background mode does not move. It cannot confirm a background click; verify with a read (ui.tree / screen.recognize) instead.',
-            }
-          : {}),
+        step: 'clicked', ...baseBg, ...bgClick, ...backgroundCaveat(bgClick), ...verify,
       } as unknown as JsonValue,
       text: null, stderr: null,
     }
