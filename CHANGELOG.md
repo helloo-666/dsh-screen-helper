@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.30
+
+- **UIA ScrollPattern scrolling: dsbox `mouse scrolluia`** — the app scrolls
+  itself through its accessibility channel. No window messages, no cursor,
+  works on UWP/self-drawn apps that ignore WM_MOUSEWHEEL. Absolute position
+  (`--percent 50`) or relative steps (`--amount -3`), auto-targets the
+  scrollable pane with content, requires explicit `--hwnd`/`--title` like
+  every dsbox input command. Verified live on the Settings app (0% → 50% →
+  back to 0%, cursor untouched).
+
 ## 0.1.29
 
 - **keyboard.write now types through UIA ValuePattern automatically** (dsbox

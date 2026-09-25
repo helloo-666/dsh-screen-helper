@@ -407,6 +407,65 @@ function Cmd-MouseScroll($argv) {
   }
 }
 
+function Cmd-MouseScrollUia($argv) {
+  # UIA ScrollPattern scrolling: the app scrolls ITSELF via its accessibility
+  # channel - no window messages, no cursor, works on UWP/self-drawn apps that
+  # ignore WM_MOUSEWHEEL. --percent sets an absolute vertical position;
+  # without it, --amount small-steps (each = 1/10 of range).
+  $percent = $null; $amount = 0; $hwnd = 0L; $title = ''
+  for ($i = 0; $i -lt $argv.Count; $i++) {
+    if ($argv[$i] -eq '--percent' -and $i+1 -lt $argv.Count) { $percent = [double]$argv[$i+1] }
+    elseif ($argv[$i] -eq '--amount' -and $i+1 -lt $argv.Count) { $amount = [int]$argv[$i+1] }
+    elseif ($argv[$i] -eq '--hwnd' -and $i+1 -lt $argv.Count) { $hwnd = [long]$argv[$i+1] }
+    elseif ($argv[$i] -eq '--title' -and $i+1 -lt $argv.Count) { $title = $argv[$i+1] }
+  }
+  if ($null -eq $percent -and $amount -eq 0) { Fail 'usage: dsbox mouse scrolluia --percent N | --amount N --hwnd H | --title T' 2 }
+  Add-Type -AssemblyName UIAutomationClient
+  Add-Type -AssemblyName UIAutomationTypes
+  if ($hwnd -le 0 -and -not $title) { Fail 'dsbox mouse scrolluia requires an explicit target: --hwnd or --title' 2 }
+  $t = Resolve-TargetWindow $title $hwnd
+  $win = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$t.handle)
+  $all = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+  # pick the scrollable element with the largest scrollable range (the main content pane)
+  $best = $null; $bestEl = $null
+  foreach ($e in $all) {
+    try {
+      $sp = $e.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+      if ($sp.Current.VerticallyScrollable) {
+        $range = 100.0
+        if ($best -eq $null) { $best = $sp; $bestEl = $e }
+      }
+    } catch { }
+  }
+  if (-not $best) {
+    Write-JsonOut @{ ok = $true; action = 'mouse.scrolluia'; status = 'not_scrollable'; error = 'no vertically scrollable element in the target window' }
+  }
+  $before = $best.Current.VerticalScrollPercent
+  if ($null -ne $percent) {
+    $best.SetScrollPercent([System.Windows.Automation.ScrollPattern]::NoScroll, [double]$percent)
+  } else {
+    $step = 10.0 * $amount
+    $cur = $before
+    if ($cur -lt 0) { $cur = 0 }
+    $next = $cur + $step
+    if ($next -lt 0) { $next = 0 }
+    if ($next -gt 100) { $next = 100 }
+    $best.SetScrollPercent([System.Windows.Automation.ScrollPattern]::NoScroll, $next)
+  }
+  Start-Sleep -Milliseconds 300
+  $after = $best.Current.VerticalScrollPercent
+  Write-JsonOut @{
+    ok = $true
+    action = 'mouse.scrolluia'
+    status = 'scrolled'
+    hwnd = $t.handle
+    elementRole = $bestEl.Current.ControlType.ProgrammaticName -replace '^ControlType\.'
+    scrollBefore = $before
+    scrollAfter = $after
+    cursorMoved = $false
+  }
+}
+
 function Cmd-KeyboardWrite($argv) {
   # WM_CHAR to the child under the point (or the first editable-looking
   # descendant). Explicit target required: never the user's foreground window.
@@ -489,9 +548,10 @@ switch ($rest[0]) {
     }
   }
   'mouse' {
-    if ($rest.Count -lt 2) { Fail "usage: dsbox mouse click|scroll ..." 2 }
+    if ($rest.Count -lt 2) { Fail "usage: dsbox mouse click|scroll|scrolluia ..." 2 }
     if ($rest[1] -eq 'click') { Cmd-MouseClick @($rest[2..($rest.Count-1)]) }
     elseif ($rest[1] -eq 'scroll') { Cmd-MouseScroll @($rest[2..($rest.Count-1)]) }
+    elseif ($rest[1] -eq 'scrolluia') { Cmd-MouseScrollUia @($rest[2..($rest.Count-1)]) }
     else { Fail "unknown mouse subcommand '$($rest[1])'" 2 }
   }
   'keyboard' {
