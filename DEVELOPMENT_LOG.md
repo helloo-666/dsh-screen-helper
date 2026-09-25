@@ -5,6 +5,35 @@
 
 ---
 
+## 2026-09-26 上午 III（第 7 轮工作）✅ 已完成
+
+### 主题：前台保护自动接线 —— 「窗口还会到前台」彻底解决
+
+| 改动 | 说明 |
+|------|------|
+| ui.click / keyboard.write 自动保护 | 每次后台投递后自动检测前台是否被目标应用抢走，被抢则自动执行 foreground restore（ALT trick 新进程夺回） |
+| 结果字段 | foregroundRestored（true/false）+ originalForeground（原前台窗口句柄） |
+
+### 实测（两条路径都验证）
+
+1. ui.click 点设置「设置」控件 → foregroundRestored=true ✅
+2. keyboard.write 写「前台保护」到搜索框 → setvalue 抢前台 → 自动夺回 foregroundRestored=true ✅
+3. 测试后搜索框清空、页面恢复 ✅
+
+### 发布
+
+- 45/45 测试 ✅
+- **v0.1.43 已发布**：https://github.com/helloo-666/dsh-screen-helper/releases/tag/v0.1.43
+- 装机副本已同步 ✅
+
+### 「同款的所有东西」完成度
+
+- ✅ 视觉七件套（滑动光标/驻留/涟漪/打字脉冲/状态徽标/滚动箭头/任务面板）
+- ✅ 任务面板自动接线
+- ✅ 前台保护自动接线（本轮）
+- ⬜ 可选：操作摘要卡片、设置页里的滚动接线
+
+---
 ## 2026-09-26 上午 II（第 6 轮工作）✅ 已完成
 
 ### 主题：面板自动接线 —— 零配置的 Codex 体验
