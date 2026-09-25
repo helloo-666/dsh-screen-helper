@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Ship the PowerShell input helpers next to the compiled output.
  *
  * The installed bundle contains only `lib/`, so a helper resolved from the
@@ -30,5 +30,6 @@ const dsboxImpl = join(root, 'scripts', 'dsbox.ps1')
 if (existsSync(dsboxSrc) && existsSync(dsboxImpl)) {
   copyFileSync(dsboxSrc, join(destDir, 'dsbox.cmd'))
   copyFileSync(dsboxImpl, join(destDir, 'dsbox.ps1'))
+  copyFileSync(join(root, 'scripts', 'status-panel.ps1'), join(destDir, 'status-panel.ps1'))
   console.log('copy-helpers: shipped dsbox.cmd/ps1 ->', destDir)
 }

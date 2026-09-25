@@ -1,4 +1,12 @@
-# Changelog
+﻿# Changelog
+
+## 0.1.41
+
+- **Codex-style task panel**: dsbox panel start|update|stop — a persistent
+  always-on-top card (title, current step with a live dot, done/total counter,
+  progress bar) pinned under the top centre. The panel runs in its own
+  process, polls a state file at 300ms, auto-closes 2.5s after a --finish
+  update. Ships as lib/scripts/status-panel.ps1.
 
 ## 0.1.40
 

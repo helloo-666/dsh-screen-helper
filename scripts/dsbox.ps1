@@ -1257,6 +1257,44 @@ switch ($rest[0]) {
       Fail 'usage: dsbox foreground restore --hwnd H' 2
     }
   }
+  'panel' {
+    # Codex-style task panel: a persistent card showing task/step/progress.
+    # panel start --title T        → spawn the panel process
+    # panel update --step S [--done N --total M]  → refresh the current step
+    # panel stop                   → finish and close the panel
+    if ($rest.Count -lt 2) { Fail 'usage: dsbox panel start|update|stop' 2 }
+    $stateFile = Join-Path $env:TEMP 'dsbox-panel-state.json'
+    switch ($rest[1]) {
+      'start' {
+        $title = 'AI 任务'
+        for ($i = 2; $i -lt $rest.Count; $i++) {
+          if ($rest[$i] -eq '--title' -and $i+1 -lt $rest.Count) { $title = $rest[$i+1]; $i++ }
+        }
+        @{ step = '准备中…'; done = 0; total = 0 } | ConvertTo-Json -Compress | Set-Content $stateFile -Encoding UTF8
+        $panelPs = Join-Path $PSScriptRoot 'status-panel.ps1'
+        if (-not (Test-Path $panelPs)) { $panelPs = 'G:\Temp\dsbox\status-panel.ps1' }
+        $null = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$panelPs`" -Title `"$title`" -StateFile `"$stateFile`"" -WindowStyle Hidden -PassThru
+        Write-JsonOut @{ ok = $true; action = 'panel.start'; title = $title }
+      }
+      'update' {
+        $step = ''; $done = 0; $total = 0; $finished = $false
+        for ($i = 2; $i -lt $rest.Count; $i++) {
+          if ($rest[$i] -eq '--step' -and $i+1 -lt $rest.Count) { $step = $rest[$i+1]; $i++ }
+          elseif ($rest[$i] -eq '--done' -and $i+1 -lt $rest.Count) { $done = [int]$rest[$i+1]; $i++ }
+          elseif ($rest[$i] -eq '--total' -and $i+1 -lt $rest.Count) { $total = [int]$rest[$i+1]; $i++ }
+          elseif ($rest[$i] -eq '--finish') { $finished = $true }
+        }
+        if (-not $step) { Fail 'usage: dsbox panel update --step S [--done N --total M] [--finish]' 2 }
+        @{ step = $step; done = $done; total = $total; finished = $finished } | ConvertTo-Json -Compress | Set-Content $stateFile -Encoding UTF8
+        Write-JsonOut @{ ok = $true; action = 'panel.update'; step = $step; finished = $finished }
+      }
+      'stop' {
+        @{ step = '完成'; done = 1; total = 1; finished = $true } | ConvertTo-Json -Compress | Set-Content $stateFile -Encoding UTF8
+        Write-JsonOut @{ ok = $true; action = 'panel.stop' }
+      }
+      default { Fail "unknown panel subcommand '$($rest[1])'" 2 }
+    }
+  }
   'health' { Cmd-Health }
   default { Fail "unknown command '$($rest[0])'" 2 }
 }
