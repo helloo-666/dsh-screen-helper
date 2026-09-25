@@ -1,5 +1,13 @@
 ﻿# Changelog
 
+## 0.1.49
+
+- **Codex visual set**: full-screen blue banner ("AI is using your computer -
+  Esc to cancel") at the top of the screen during operations, plus the
+  black-arrow cursor with a blue radial glow that glides to the target and
+  fires a blue click ripple — matching the reference look. Visual functions
+  moved to an external codex-visual.ps1 (dot-sourced) to keep the main script
+  encoding-safe.
 ## 0.1.48
 
 - **Agent-facing panel session actions**: panel.begin --title T,

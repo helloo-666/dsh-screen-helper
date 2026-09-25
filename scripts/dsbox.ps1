@@ -333,6 +333,12 @@ function Show-ScrollCue([int]$Cx, [int]$Cy, [int]$Amount) {
   }
 }
 
+
+# Codex-style visual effects (blue banner, glowing cursor) live in their own
+# file so the main script stays free of encoding-sensitive inline code.
+if ($PSScriptRoot) { . (Join-Path $PSScriptRoot "codex-visual.ps1") }
+elseif (Test-Path "G:\Temp\dsbox\codex-visual.ps1") { . "G:\Temp\dsbox\codex-visual.ps1" }
+
 function Show-StatusBadge([string]$Text, [int]$Ms = 1800, [int]$AnchorX = -1, [int]$AnchorY = -1) {
   # small dark pill at the top centre of the primary screen: what the AI is
   # doing right now (e.g. "AI clicking [返回]"). Fades after $Ms.
@@ -571,7 +577,7 @@ function Cmd-MouseClick($argv) {
   $lastPos = Get-LastCursorPos
   $fx = if ($lastPos) { [int]$lastPos.x } else { -1 }
   $fy = if ($lastPos) { [int]$lastPos.y } else { -1 }
-  Show-AiCursorAnimated $point[0] $point[1] $fx $fy 700 $true
+  Show-CodexCursor $point[0] $point[1] $fx $fy 900
   Set-LastCursorPos $point[0] $point[1]
   $child = [IntPtr]$t.handle
   $wr = New-Object N+RECT
@@ -848,8 +854,8 @@ switch ($rest[0]) {
       $lastPos2 = Get-LastCursorPos
       $fx2 = if ($lastPos2) { [int]$lastPos2.x } else { -1 }
       $fy2 = if ($lastPos2) { [int]$lastPos2.y } else { -1 }
-      Show-StatusBadge "AI 正在输入（$($text.Length) 字符）" 1800 $ebCx ([int]$eb.Y)
-      Show-AiCursorAnimated $ebCx $ebCy $fx2 $fy2 700 $true
+      Show-Banner "AI 正在使用你的电脑 · Esc 取消" 2000
+      Show-CodexCursor $ebCx $ebCy $fx2 $fy2 900
       Set-LastCursorPos $ebCx $ebCy
       # keystroke pulses: show up to 12 characters ticking above the field
       $chars = $text.ToCharArray()
@@ -1125,8 +1131,8 @@ switch ($rest[0]) {
       $lastPos3 = Get-LastCursorPos
       $fx3 = if ($lastPos3) { [int]$lastPos3.x } else { -1 }
       $fy3 = if ($lastPos3) { [int]$lastPos3.y } else { -1 }
-      Show-StatusBadge "AI 正在点击「$name」" 1800 $rCx ([int]$r.Y)
-      Show-AiCursorAnimated $rCx $rCy $fx3 $fy3 700 $true
+      Show-Banner "AI 正在使用你的电脑 · Esc 取消" 2000
+      Show-CodexCursor $rCx $rCy $fx3 $fy3 900
       Set-LastCursorPos $rCx $rCy
       Save-Foreground
       $invoked = $false; $method = ''

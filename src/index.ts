@@ -1781,12 +1781,13 @@ async function dispatch(params: {
       return i >= 0 && i + 1 < restArgv.length ? restArgv[i + 1] : undefined
     }
     const title = flag('--title') ?? 'AI 任务'
+    const plannedTotal = flag('--total')
     const stepText = flag('--text') ?? flag('--step') ?? ''
     const summary = flag('--summary') ?? ''
     if (!panelState.active && action !== 'panel.finish') {
       await runCli({
         cliPath: resolveDsboxPath() ?? cliPath,
-        invocation: { path: ['panel', 'start'], args: ['--title', title] },
+        invocation: { path: ['panel', 'start'], args: ['--title', title, ...(plannedTotal ? ['--total', plannedTotal] : [])] },
         timeoutMs: 15_000,
         signal: exec.signal,
       })
