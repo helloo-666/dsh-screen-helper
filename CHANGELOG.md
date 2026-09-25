@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.35
+
+- **Cursor verified normal** after user report of "no cursor": GetCursorInfo
+  shows flags=1 (visible), valid handle, live position — the system cursor is
+  never hidden. What the report actually reflects is the zero-cursor design:
+  UIA delivery (Invoke/SetValue) acts on the element without moving the
+  pointer, so the cursor never appears over the clicked button / typed field.
+  The 0.1.34 element-frame highlight is the intended visual cue instead.
+- Defensive hardening of `foreground restore`: both ALT variants (left+right)
+  are now released after the grant trick, plus a zero-distance mouse event, so
+  no key state can linger regardless of consumer behaviour.
+
 ## 0.1.34
 
 - **Frame highlight now covers every delivery path.** The 0.1.27/0.1.29 fast

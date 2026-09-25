@@ -97,6 +97,7 @@ public static class N {
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
@@ -1005,6 +1006,9 @@ switch ($rest[0]) {
       try {
         [N]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
         [N]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        [N]::keybd_event(0xA5, 0, 0, [UIntPtr]::Zero)
+        [N]::keybd_event(0xA5, 0, 2, [UIntPtr]::Zero)
+        [N]::mouse_event(0x0001, 0, 0, 0, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 60
         if ($fgThread -ne 0 -and $fgThread -ne $mine) {
           $attached = [N]::AttachThreadInput($mine, $fgThread, $true)
