@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # dsbox - fast local screen automation CLI (zero dependencies)
 # WinRT OCR + GDI+ capture + Win32 messages, all built into Windows.
 # Output contract: exit 0 = success (stdout JSON); exit 2 = usage error; exit 1 = runtime error.
@@ -98,6 +98,7 @@ public static class N {
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int h2, uint flags);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
@@ -293,42 +294,67 @@ function Show-WindowFrame([long]$Hwnd, [int[]]$Rect, [int]$Ms = 1600) {
   }
 }
 
-function Show-AiCursor([int[]]$Point, [int]$Ms = 900) {
-  # The AI's own pointer: a translucent orange arrow drawn at the operation
-  # point on a click-through topmost layered window. The physical cursor never
-  # moves - this shows WHERE the AI is acting, answering "your cursor?".
+function Show-AiCursorAnimated([int]$ToX, [int]$ToY, [int]$FromX = -1, [int]$FromY = -1, [int]$Ms = 900) {
+  # Codex-style AI pointer: glides from the last operation point to the new
+  # target, shows a click ripple, then fades. The physical cursor never moves.
   $ov = [IntPtr]::Zero
   try {
     Add-Type -AssemblyName System.Drawing
-    $size = 28
-    $x = $Point[0] - 2; $y = $Point[1] - 2
-    $w = $size + 8; $h = $size + 8
-    if ($w -le 0 -or $h -le 0) { return }
-    $ex = 0x00080000 -bor 0x00000020 -bor 0x00000080 -bor 0x08000000
-    $ov = [N]::CreateWindowExW([uint32]$ex, 'Static', 'dsbox-aicursor', [uint32]0x90000000, $x, $y, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
+    $size = 28; $w = $size + 8; $h = $size + 8
+    $ex = [uint32]0x00080000 -bor [uint32]0x00000020 -bor [uint32]0x00000080 -bor [uint32]0x08000000
+    $startX = if ($FromX -ge 0) { $FromX } else { $ToX }
+    $startY = if ($FromY -ge 0) { $FromY } else { $ToY }
+    $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-aicursor', [uint32]'0x90000000', $startX - 2, $startY - 2, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
     if ($ov -eq [IntPtr]::Zero) { return }
     [void][N]::SetWindowLongW($ov, -20, [int]$ex)
     $bmp = New-Object System.Drawing.Bitmap($w, $h)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    # arrow cursor shape, orange with dark outline
-    $pts = @( (New-Object System.Drawing.Point(4,2)), (New-Object System.Drawing.Point(4,22)), (New-Object System.Drawing.Point(9,17)), (New-Object System.Drawing.Point(13,26)), (New-Object System.Drawing.Point(16,25)), (New-Object System.Drawing.Point(12,16)), (New-Object System.Drawing.Point(19,16)) )
-    $fill = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(235,255,140,0))
-    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(255,40,20,0), 2)
-    $g.FillPolygon($fill, $pts)
-    $g.DrawPolygon($pen, $pts)
-    $g.Dispose()
-    $hdc = [N]::GetDC($ov)
-    $gdc = [System.Drawing.Graphics]::FromHdc($hdc)
-    $gdc.DrawImage($bmp, 0, 0)
-    $gdc.Dispose()
-    [void][N]::ReleaseDC($ov, $hdc)
-    $bmp.Dispose()
+    $pts = @(
+      (New-Object System.Drawing.Point(4, 2)), (New-Object System.Drawing.Point(4, 22)),
+      (New-Object System.Drawing.Point(9, 17)), (New-Object System.Drawing.Point(13, 26)),
+      (New-Object System.Drawing.Point(16, 25)), (New-Object System.Drawing.Point(12, 16)),
+      (New-Object System.Drawing.Point(19, 16))
+    )
+    $fill = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(235, 255, 140, 0))
+    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(255, 40, 20, 0), 2)
+    $g.FillPolygon($fill, $pts); $g.DrawPolygon($pen, $pts); $g.Dispose()
+    $hdc = [N]::GetDC($ov); $gdc = [System.Drawing.Graphics]::FromHdc($hdc); $gdc.DrawImage($bmp, 0, 0); $gdc.Dispose()
+    [void][N]::ReleaseDC($ov, $hdc); $bmp.Dispose()
     [void][N]::SetLayeredWindowAttributes($ov, 0, 235, 0x2)
-    Start-Sleep -Milliseconds $Ms
-    $steps = 4
-    for ($s = $steps; $s -ge 1; $s--) {
-      $alpha = [byte][Math]::Max(15, [int](235 * $s / $steps))
+    # glide: ~16 frames over 280ms with ease-out (fast then slow)
+    $frames = 16
+    $dx = $ToX - $startX; $dy = $ToY - $startY
+    for ($f = 1; $f -le $frames; $f++) {
+      $t = $f / $frames
+      $ease = 1 - [Math]::Pow(1 - $t, 3)
+      $px = [int]($startX + $dx * $ease)
+      $py = [int]($startY + $dy * $ease)
+      [void][N]::SetWindowPos($ov, [IntPtr](-1), $px - 2, $py - 2, 0, 0, 0x0015)
+      Start-Sleep -Milliseconds 18
+    }
+    # click ripple: expanding circle at the target
+    $rippleSteps = 5
+    $bmp2 = New-Object System.Drawing.Bitmap(80, 80)
+    $g2 = [System.Drawing.Graphics]::FromImage($bmp2)
+    $g2.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $rc = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(220, 255, 140, 0), 3)
+    for ($rs = 1; $rs -le $rippleSteps; $rs++) {
+      $g2.Clear([System.Drawing.Color]::Transparent)
+      $rad = 8 + $rs * 9
+      $g2.DrawEllipse($rc, 40 - $rad, 40 - $rad, $rad * 2, $rad * 2)
+      $rb = $bmp2 | ForEach-Object { $_ }
+      $hdc3 = [N]::GetDC($ov)
+      $g3 = [System.Drawing.Graphics]::FromHdc($hdc3)
+      $g3.DrawImage($bmp2, $ToX - 2 - 40 + ($w/2 - 38), $ToY - 2 - 40 + ($h/2 - 38))
+      $g3.Dispose()
+      [void][N]::ReleaseDC($ov, $hdc3)
+      Start-Sleep -Milliseconds 40
+    }
+    $rc.Dispose(); $bmp2.Dispose()
+    Start-Sleep -Milliseconds ([Math]::Max(150, $Ms - 500))
+    for ($s = 4; $s -ge 1; $s--) {
+      $alpha = [byte][Math]::Max(15, [int](235 * $s / 4))
       [void][N]::SetLayeredWindowAttributes($ov, 0, $alpha, 0x2)
       Start-Sleep -Milliseconds 60
     }
@@ -411,7 +437,7 @@ function Cmd-MouseClick($argv) {
   }
   Save-Foreground
   Show-WindowFrame $t.handle $t.rect 1600
-  Show-AiCursor @($point[0], $point[1]) 700
+  Show-AiCursorAnimated $point[0] $point[1] -1 -1 700
   $child = [IntPtr]$t.handle
   $wr = New-Object N+RECT
   [void][N]::GetWindowRect($child, [ref]$wr)
@@ -673,7 +699,7 @@ switch ($rest[0]) {
       $eb = $el.Current.BoundingRectangle
       # frame the input element itself so the user sees where text goes
       Show-WindowFrame 0 @([int]$eb.X, [int]$eb.Y, [int]($eb.X+$eb.Width), [int]($eb.Y+$eb.Height)) 900
-      Show-AiCursor @([int]($eb.X+$eb.Width/2), [int]($eb.Y+$eb.Height/2)) 700
+      Show-AiCursorAnimated ([int]($eb.X+$eb.Width/2)) ([int]($eb.Y+$eb.Height/2)) -1 -1 700
       Save-Foreground
       try {
         $vp = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
@@ -938,7 +964,7 @@ switch ($rest[0]) {
       $r = $el.Current.BoundingRectangle
       # frame the ELEMENT itself (tighter and clearer than the whole window)
       Show-WindowFrame 0 @([int]$r.X, [int]$r.Y, [int]($r.X+$r.Width), [int]($r.Y+$r.Height)) 900
-      Show-AiCursor @([int]($r.X+$r.Width/2), [int]($r.Y+$r.Height/2)) 700
+      Show-AiCursorAnimated ([int]($r.X+$r.Width/2)) ([int]($r.Y+$r.Height/2)) -1 -1 700
       Save-Foreground
       $invoked = $false; $method = ''
       try {

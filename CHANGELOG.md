@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.37
+
+- **Codex-style animated AI pointer**: the orange arrow now **glides** from
+  its previous position to the new target (16 frames, ~280ms, ease-out) and
+  fires an **expanding click ripple** on arrival, then fades — instead of
+  teleporting in and out. Physical cursor still never moves.
+
 ## 0.1.36
 
 - **"Your cursor?" — the AI's own pointer.** In answer to "你的光标呢": UIA
