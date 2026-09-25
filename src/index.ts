@@ -1,4 +1,4 @@
-﻿/**
+/**
  * dsh-screen-helper — a DeepSeek Harness bundle that drives the
  * ScreenAutomationHelper CLI (屏幕自动化小助手) from the model.
  *
@@ -1054,11 +1054,22 @@ async function runUiClick(params: {
       }
     }
 
+    // Foreground protection: the target app may have activated itself in
+    // response to our input; hand the foreground back to the saved window.
+    const preFg = await runCli({
+      cliPath: enginePath,
+      invocation: { path: ['window', 'foreground'], args: [] },
+      timeoutMs: params.config.timeoutMs,
+      signal: params.exec.signal,
+    })
+    const preFgHwnd = (preFg.ok ? (preFg.json as Record<string, unknown> | undefined)?.handle : undefined)
+    const fgRestored = await autoForegroundRestore(typeof preFgHwnd === 'number' ? preFgHwnd : undefined)
     return {
       action: params.action, tier: params.tier, executed: true,
       blockedReason: null, exitCode: 0,
       data: {
         step: 'clicked', ...baseBg, ...bgClick, ...backgroundCaveat(bgClick), ...structNote, ...verify,
+        ...(preFgHwnd !== undefined ? { foregroundRestored: fgRestored, originalForeground: preFgHwnd } : {}),
       } as unknown as JsonValue,
       text: null, stderr: null,
     }
@@ -1511,6 +1522,15 @@ async function runBackground(params: {
     })
     const svJson = sv.ok ? (sv.json as Record<string, unknown> | undefined) : undefined
     if (svJson?.status === 'set') {
+      // Foreground protection: writing text makes some apps activate themselves.
+      const preFgSv = await runCli({
+        cliPath: resolveDsboxPath()!,
+        invocation: { path: ['window', 'foreground'], args: [] },
+        timeoutMs: params.config.timeoutMs,
+        signal: params.exec.signal,
+      })
+      const preFgSvHwnd = (preFgSv.ok ? (preFgSv.json as Record<string, unknown> | undefined)?.handle : undefined)
+      const fgRestoredSv = await autoForegroundRestore(typeof preFgSvHwnd === 'number' ? preFgSvHwnd : undefined)
       return {
         action: params.action,
         tier: params.tier,
@@ -1523,6 +1543,7 @@ async function runBackground(params: {
           element: svJson.element,
           valueAfter: svJson.valueAfter,
           cursorMoved: false,
+          ...(preFgSvHwnd !== undefined ? { foregroundRestored: fgRestoredSv, originalForeground: preFgSvHwnd } : {}),
         } as unknown as JsonValue,
         text: null,
         stderr: null,
@@ -1636,6 +1657,31 @@ function backgroundCaveat(out: Record<string, unknown>): Record<string, unknown>
  * including honoring `inputMode`. The single entry point is what keeps the
  * approval token from becoming a way around the background-input policy.
  */
+// ---- Foreground protection: hand back focus after app-steals ----
+async function autoForegroundRestore(savedHwnd: number | undefined): Promise<boolean> {
+  if (!savedHwnd || !(resolveDsboxPath())) return false
+  try {
+    // wait a beat for the app's async activation to land
+    await new Promise((r) => setTimeout(r, 600))
+    const fg = await runCli({
+      cliPath: resolveDsboxPath()!,
+      invocation: { path: ['window', 'foreground'], args: [] },
+      timeoutMs: 15_000,
+    })
+    const fgJson = fg.ok ? (fg.json as Record<string, unknown> | undefined) : undefined
+    const fgHwnd = typeof fgJson?.handle === 'number' ? fgJson.handle : 0
+    if (fgHwnd === savedHwnd) return true // foreground never stolen
+    const r = await runCli({
+      cliPath: resolveDsboxPath()!,
+      invocation: { path: ['foreground', 'restore'], args: ['--hwnd', String(savedHwnd)] },
+      timeoutMs: 15_000,
+    })
+    const rj = r.ok ? (r.json as Record<string, unknown> | undefined) : undefined
+    return rj?.restored === true
+  } catch {
+    return false
+  }
+}
 // ---- Codex-style task panel auto-management (dsbox panel commands) ----
 const panelState = { active: false, done: 0, stopTimer: null as ReturnType<typeof setTimeout> | null }
 function panelDescribe(action: string, argv: readonly string[]): string {
