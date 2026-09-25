@@ -1,5 +1,15 @@
 ﻿# Changelog
 
+## 0.1.45
+
+- **Panel summary card**: when the panel auto-closes after 6s idle, it now
+  shows a summary card ("任务完成" + the last up-to-5 step descriptions) for
+  3s before closing — the Codex-style end-of-task recap.
+- **Fixed: $PSScriptRoot crash** in the panel-start path when dsbox ran
+  outside its script directory (crashed every scroll/click through the plugin
+  with a JSON-null result).
+- Panel steps are tracked in plugin memory and rendered as a Chinese summary
+  sentence on close.
 ## 0.1.44
 
 - **Status badge now follows the operation**: instead of sitting at the top

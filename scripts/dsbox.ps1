@@ -1277,7 +1277,7 @@ switch ($rest[0]) {
           if ($rest[$i] -eq '--title' -and $i+1 -lt $rest.Count) { $title = $rest[$i+1]; $i++ }
         }
         @{ step = '准备中…'; done = 0; total = 0 } | ConvertTo-Json -Compress | Set-Content $stateFile -Encoding UTF8
-        $panelPs = Join-Path $PSScriptRoot 'status-panel.ps1'
+        $panelPs = if ($PSScriptRoot) { Join-Path $PSScriptRoot 'status-panel.ps1' } else { 'G:\Temp\dsbox\status-panel.ps1' }
         if (-not (Test-Path $panelPs)) { $panelPs = 'G:\Temp\dsbox\status-panel.ps1' }
         $null = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$panelPs`" -Title `"$title`" -StateFile `"$stateFile`"" -WindowStyle Hidden -PassThru
         Write-JsonOut @{ ok = $true; action = 'panel.start'; title = $title }
@@ -1295,7 +1295,11 @@ switch ($rest[0]) {
         Write-JsonOut @{ ok = $true; action = 'panel.update'; step = $step; finished = $finished }
       }
       'stop' {
-        @{ step = '完成'; done = 1; total = 1; finished = $true } | ConvertTo-Json -Compress | Set-Content $stateFile -Encoding UTF8
+        $summary = ''
+        for ($si = 2; $si -lt $rest.Count; $si++) {
+          if ($rest[$si] -eq '--summary' -and $si+1 -lt $rest.Count) { $summary = $rest[$si+1]; $si++ }
+        }
+        @{ step = '完成'; done = 1; total = 1; finished = $true; summary = $summary } | ConvertTo-Json -Compress | Set-Content $stateFile -Encoding UTF8
         Write-JsonOut @{ ok = $true; action = 'panel.stop' }
       }
       default { Fail "unknown panel subcommand '$($rest[1])'" 2 }

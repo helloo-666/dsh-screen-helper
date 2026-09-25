@@ -20,6 +20,34 @@ $accent = [System.Drawing.Color]::FromArgb(255, 255, 170, 40)
 $white = [System.Drawing.Color]::FromArgb(255, 235, 235, 240)
 $muted = [System.Drawing.Color]::FromArgb(255, 150, 150, 160)
 
+function Render-Summary([string]$Text) {
+  # summary card: taller layout with wrapped lines, shown before closing
+  $bmp = New-Object System.Drawing.Bitmap($w, $h + 60)
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
+  $bg = New-Object System.Drawing.SolidBrush($bgColor)
+  $g.FillRectangle($bg, 0, 0, $w, $h + 60)
+  $ftH = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
+  $ftB = New-Object System.Drawing.Font('Microsoft YaHei UI', 8)
+  $cA = New-Object System.Drawing.SolidBrush($accent)
+  $cW = New-Object System.Drawing.SolidBrush($white)
+  $g.DrawString('任务完成', $ftH, $cA, 12, 8)
+  $y = 32
+  $maxChars = 26
+  for ($i = 0; $i -lt $Text.Length; $i += $maxChars) {
+    $line = $Text.Substring($i, [Math]::Min($maxChars, $Text.Length - $i))
+    $g.DrawString($line, $ftB, $cW, 12, $y)
+    $y += 18
+  }
+  $g.Dispose(); $bmp.Dispose(); $bg.Dispose(); $ftH.Dispose(); $ftB.Dispose(); $cA.Dispose(); $cW.Dispose()
+  $hdc = [DPN.PN]::GetDC($ov)
+  $gdc = [System.Drawing.Graphics]::FromHdc($hdc)
+  $gdc.DrawImage($bmp, 0, 0, $w, $h + 60)
+  $gdc.Dispose()
+  [void][DPN.PN]::ReleaseDC($ov, $hdc)
+}
+
 function Render([string]$step, [int]$done, [int]$total, [bool]$finished) {
   $bmp = New-Object System.Drawing.Bitmap($w, $h)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -68,6 +96,11 @@ while ((Get-Date) -lt $deadline) {
       $st = Get-Content $StateFile -Raw | ConvertFrom-Json
       if ($st.stop) { break }
       Render $st.step $st.done $st.total $([bool]$st.finished)
+      if ($st.summary) {
+        Render-Summary $st.summary
+        Start-Sleep -Milliseconds 3000
+        break
+      }
       if ($st.finished) {
         Start-Sleep -Milliseconds 2500
         break

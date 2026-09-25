@@ -1,4 +1,4 @@
-/**
+﻿/**
  * dsh-screen-helper — a DeepSeek Harness bundle that drives the
  * ScreenAutomationHelper CLI (屏幕自动化小助手) from the model.
  *
@@ -1683,7 +1683,12 @@ async function autoForegroundRestore(savedHwnd: number | undefined): Promise<boo
   }
 }
 // ---- Codex-style task panel auto-management (dsbox panel commands) ----
-const panelState = { active: false, done: 0, stopTimer: null as ReturnType<typeof setTimeout> | null }
+const panelState = {
+  active: false,
+  done: 0,
+  steps: [] as string[],
+  stopTimer: null as ReturnType<typeof setTimeout> | null,
+}
 function panelDescribe(action: string, argv: readonly string[]): string {
   const flag = (n: string): string | undefined => {
     const i = argv.indexOf(n)
@@ -1709,8 +1714,10 @@ async function panelTouch(action: string, argv: readonly string[]): Promise<void
       })
       panelState.active = true
       panelState.done = 0
+      panelState.steps = []
     }
     panelState.done += 1
+    panelState.steps.push(step)
     await runCli({
       cliPath: resolveDsboxPath() ?? 'dsbox.cmd',
       invocation: {
@@ -1728,6 +1735,7 @@ async function panelTouch(action: string, argv: readonly string[]): Promise<void
       }).then(() => {
         panelState.active = false
         panelState.done = 0
+        panelState.steps = []
       })
     }, 6_000)
   } catch { }
