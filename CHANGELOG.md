@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.29
+
+- **keyboard.write now types through UIA ValuePattern automatically** (dsbox
+  present + explicit target): text lands in the window's edit field via the
+  accessibility channel —no keystrokes, no cursor, no focus change, works on
+  UWP apps where WM_CHAR is ignored. Falls back to WM_CHAR typing when the
+  window exposes no settable edit element. Result tagged
+  `deliveryMethod: 'uia-setvalue'`. Measured e2e: **1.3s** (Settings search
+  box, write → read-back verified).
+- Combined with 0.1.27's InvokePattern click, the full background operation
+  set (click buttons, type text, scroll) now runs without ever touching the
+  user's cursor or keyboard on the vast majority of windows.
+
 ## 0.1.28
 
 - **"AI 自己的键盘"：dsbox `keyboard setvalue`** — puts text straight into an

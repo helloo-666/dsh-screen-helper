@@ -1488,6 +1488,47 @@ async function runBackground(params: {
     }
   }
 
+  // UIA ValuePattern fast path for typing (dsbox only): when dsbox is present
+  // and an explicit target window is known, try putting the text straight into
+  // the window's edit field via the accessibility channel —no keystrokes, no
+  // cursor, works where WM_CHAR is ignored. Falls back to WM_CHAR typing when
+  // the window has no settable edit element.
+  if (p.kind === 'type' && resolveDsboxPath() !== null) {
+    const sv = await runCli({
+      cliPath: resolveDsboxPath()!,
+      invocation: {
+        path: ['keyboard', 'setvalue'],
+        args: [
+          '--text', p.text,
+          ...(p.hwnd !== undefined ? ['--hwnd', String(p.hwnd)] : []),
+          ...(p.title !== undefined ? ['--title', p.title] : []),
+        ],
+      },
+      timeoutMs: params.config.timeoutMs,
+      signal: params.exec.signal,
+    })
+    const svJson = sv.ok ? (sv.json as Record<string, unknown> | undefined) : undefined
+    if (svJson?.status === 'set') {
+      return {
+        action: params.action,
+        tier: params.tier,
+        executed: true,
+        blockedReason: null,
+        exitCode: 0,
+        data: {
+          inputMode: 'background',
+          deliveryMethod: 'uia-setvalue',
+          element: svJson.element,
+          valueAfter: svJson.valueAfter,
+          cursorMoved: false,
+        } as unknown as JsonValue,
+        text: null,
+        stderr: null,
+      }
+    }
+    // not_found / no_value_pattern → fall through to WM_CHAR typing
+  }
+
   const out = await runBackgroundInput({
     action: p.kind,
     ...(p.kind === 'click' || p.kind === 'scroll' ? { x: p.x, y: p.y } : {}),
