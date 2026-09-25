@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ScreenAutomationHelper CLI invocation core.
  *
  * Responsibilities, in order of importance:
@@ -14,7 +14,7 @@
  */
 
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -541,9 +541,19 @@ async function runBackgroundInputViaDsbox(
       // dsbox does not implement single-key delivery yet; fall back.
       return null
   }
-  // Probe action: dsbox HAS a probe command — expose it as its own case.
-  // (handled below via 'probe' keyword: kept null here because callers expect
-  //  probe to run against an existing hwnd with different argv shape)
+  // Scroll with an explicit target: prefer UIA ScrollPattern (the app scrolls
+  // itself — no messages, works where WM_MOUSEWHEEL is ignored). Falls back to
+  // WM_MOUSEWHEEL when no scrollable element exists. dsbox maps --amount to a
+  // 1/10-range step, matching the message path's per-notch semantics.
+  if (params.action === 'scroll' && (params.hwnd !== undefined || params.title !== undefined)) {
+    const uiaArgv = ['mouse', 'scrolluia']
+    if (params.amount !== undefined) uiaArgv.push('--amount', String(params.amount))
+    if (params.title !== undefined) uiaArgv.push('--title', params.title)
+    if (params.hwnd !== undefined) uiaArgv.push('--hwnd', String(params.hwnd))
+    const uia = await spawnDsboxJson(dsboxPath, uiaArgv, Math.min(params.timeoutMs, 30_000))
+    if (uia && uia.status === 'scrolled') return uia
+    // not_scrollable / failure → fall through to the message path below
+  }
   const argv = [...sub]
   if (params.x !== undefined && params.y !== undefined) argv.push('--point', `${params.x},${params.y}`)
   if (params.text !== undefined) argv.push('--text', params.text)
@@ -551,7 +561,15 @@ async function runBackgroundInputViaDsbox(
   if (params.title !== undefined) argv.push('--title', params.title)
   if (params.hwnd !== undefined) argv.push('--hwnd', String(params.hwnd))
 
-  const { spawn } = await import('node:child_process')
+  return spawnDsboxJson(dsboxPath, argv, Math.min(params.timeoutMs, 30_000))
+}
+
+/** Spawn `cmd.exe /c dsbox <argv>` and parse the JSON envelope; null on any failure. */
+function spawnDsboxJson(
+  dsboxPath: string,
+  argv: string[],
+  timeoutMs: number,
+): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
     let stdout = ''
     let settled = false
@@ -577,7 +595,7 @@ async function runBackgroundInputViaDsbox(
     const timer = setTimeout(() => {
       child.kill('SIGKILL')
       finish(null)
-    }, Math.min(params.timeoutMs, 30_000))
+    }, timeoutMs)
     child.on('error', () => finish(null))
     child.on('close', () => {
       const raw = stdout.trim()

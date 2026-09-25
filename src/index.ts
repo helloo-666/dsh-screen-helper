@@ -1252,7 +1252,7 @@ type BackgroundPlan =
   | { kind: 'click'; x: number; y: number; title?: string; hwnd?: number }
   | { kind: 'type'; text: string; title?: string; hwnd?: number }
   | { kind: 'key'; key: number; title?: string; hwnd?: number }
-  | { kind: 'scroll'; x: number; y: number; amount: number; title?: string; hwnd?: number }
+  | { kind: 'scroll'; x?: number; y?: number; amount: number; title?: string; hwnd?: number }
 
 function backgroundPlan(action: string, argv: readonly string[]): BackgroundPlan | null {
   const flag = (name: string): string | undefined => {
@@ -1278,14 +1278,16 @@ function backgroundPlan(action: string, argv: readonly string[]): BackgroundPlan
     return { kind: 'type', text, ...target }
   }
   if (action === 'mouse.scroll') {
-    const pt = parsePoint(flag('--point'))
-    if (!pt) return null
     // SAH's --amount is "wheel clicks"; WM_MOUSEWHEEL wants a delta of ±120 per
     // click. Negative = scroll down, matching real-wheel behaviour.
     const raw = flag('--amount')
     const amount = raw !== undefined && /^-?\d+$/.test(raw) ? Number(raw) : 0
     if (amount === 0) return null
-    return { kind: 'scroll', x: pt[0], y: pt[1], amount, ...target }
+    // UIA scrolling (dsbox) needs no point — the app scrolls itself. A point is
+    // only required for the message path (wheel goes to the child under it).
+    const pt = parsePoint(flag('--point'))
+    if (!pt && target.title === undefined && target.hwnd === undefined) return null
+    return { kind: 'scroll', ...(pt ? { x: pt[0], y: pt[1] } : {}), amount, ...target }
   }
   if (action === 'keyboard.hotkey') return null
   return null

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.31
+
+- **mouse.scroll background mode now auto-routes through UIA ScrollPattern**:
+  with dsbox present and an explicit `--hwnd`/`--title`, scrolling goes
+  `scrolluia` first (the app scrolls itself — no messages, no cursor) and only
+  falls back to WM_MOUSEWHEEL when the window exposes no scrollable element.
+  `--point` is no longer required for targeted scrolling (UIA needs no
+  coordinates); it stays required for the message path.
+- Refactor: dsbox spawn/JSON-parse logic consolidated into `spawnDsboxJson`
+  (was inline in one closure; the scroll fast path needed to reuse it).
+
 ## 0.1.30
 
 - **UIA ScrollPattern scrolling: dsbox `mouse scrolluia`** — the app scrolls
