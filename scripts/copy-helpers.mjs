@@ -32,5 +32,6 @@ if (existsSync(dsboxSrc) && existsSync(dsboxImpl)) {
   copyFileSync(dsboxImpl, join(destDir, 'dsbox.ps1'))
   copyFileSync(join(root, 'scripts', 'status-panel.ps1'), join(destDir, 'status-panel.ps1'))
   copyFileSync(join(root, 'scripts', 'codex-visual.ps1'), join(destDir, 'codex-visual.ps1'))
+  copyFileSync(join(root, 'scripts', 'persistent-panel.ps1'), join(destDir, 'persistent-panel.ps1'))
   console.log('copy-helpers: shipped dsbox.cmd/ps1 ->', destDir)
 }

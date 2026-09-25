@@ -1308,9 +1308,22 @@ switch ($rest[0]) {
           if ($rest[$i] -eq '--title' -and $i+1 -lt $rest.Count) { $title = $rest[$i+1]; $i++ }
         }
         @{ step = '准备中…'; done = 0; total = 0 } | ConvertTo-Json -Compress | Set-Content $stateFile -Encoding UTF8
-        $panelPs = if ($PSScriptRoot) { Join-Path $PSScriptRoot 'status-panel.ps1' } else { 'G:\Temp\dsbox\status-panel.ps1' }
-        if (-not (Test-Path $panelPs)) { $panelPs = 'G:\Temp\dsbox\status-panel.ps1' }
-        $null = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$panelPs`" -Title `"$title`" -StateFile `"$stateFile`"" -WindowStyle Hidden -PassThru
+        # persistent-panel.ps1 is the WinForms version: rounded card, smooth
+        # gradient progress bar, and it survives across dsbox invocations.
+        $panelPs = $null
+        if ($PSScriptRoot) {
+          $cand = Join-Path $PSScriptRoot 'persistent-panel.ps1'
+          if (Test-Path $cand) { $panelPs = $cand }
+        }
+        if (-not $panelPs) {
+          foreach ($cand in @('G:\Temp\dsbox\persistent-panel.ps1', 'G:\dsbox\persistent-panel.ps1')) {
+            if (Test-Path $cand) { $panelPs = $cand; break }
+          }
+        }
+        if (-not $panelPs) { Fail 'panel script (persistent-panel.ps1) not found next to dsbox.ps1' }
+        # -WindowStyle Hidden keeps the console hidden; the WinForms form is a
+        # separate top-level window and still shows.
+        $null = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$panelPs`" -Title `"$title`" -StateFile `"$stateFile`"" -WindowStyle Hidden -PassThru
         Write-JsonOut @{ ok = $true; action = 'panel.start'; title = $title }
       }
       'update' {
