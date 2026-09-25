@@ -1,5 +1,9 @@
 ﻿# Changelog
 
+## 0.1.47
+
+- README: dsbox engine section — capability table, delivery channels, visual
+  feedback set, and engine configuration.
 ## 0.1.46
 
 - **Fixed: foreground protection timing.** The pre-delivery foreground
