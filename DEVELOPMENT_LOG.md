@@ -5,6 +5,29 @@
 
 ---
 
+## 2026-09-26 中午 IV（第 17 轮工作）✅ 已完成
+
+### 主题：侧边栏 Tab 支持（你圈的「添加 Tab 插件」）
+
+| 事项 | 说明 |
+|------|------|
+| 侧边栏机制确认 | DSH 支持「Tab 插件」—— 通过 ctx.betterSidebar 服务注册侧边栏页面 |
+| 插件已接入 | 插件启动时检测宿主的 betterSidebar 服务，有则注册「AI 屏幕」侧边栏页面，没有则静默降级 |
+| 官方示例插件 | npm 上没有 dsh-plugin-better-sidebar（是 DSH 对话框的占位示例）—— 我们的插件自己实现了这个能力 |
+| Chromium 点击修复 | dsbox 点击前发 WM_MOUSEMOVE hover（Chromium/Electron 需要才响应合成点击） |
+
+### 发布
+
+- 45/45 测试 ✅
+- **v0.1.54 tag 已发布**（package 0.1.53）：https://github.com/helloo-666/dsh-screen-helper/releases/tag/v0.1.54
+- 装机副本已同步 ✅
+
+### 说明
+
+侧边栏页面的实际内容渲染取决于 DSH 宿主对 betterSidebar 的支持程度。重启会话后如果侧边栏出现「AI 屏幕」Tab，说明宿主已注入服务；没有则表示当前 DSH 版本未开放该能力。
+
+---
+
 ## 2026-09-26 中午 III（第 16 轮工作）✅ 已完成
 
 ### 主题：去掉黑窗口（你反馈「弹命令窗口好丑」）
