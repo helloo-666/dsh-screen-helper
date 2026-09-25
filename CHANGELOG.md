@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.24
+
+- **dsbox covers the full background-input surface.** New `mouse scroll`
+  (WM_MOUSEWHEEL ±120/click), `keyboard write` (WM_CHAR with per-char timeout
+  accounting and a frame highlight so the user sees where typing goes), both
+  requiring an explicit `--hwnd`/`--title` like every dsbox input command.
+- **The plugin now routes background delivery through dsbox when present**
+  (looked up next to the bundled script, at `G:\dsbox\dsbox.cmd`, with the old
+  PowerShell script as automatic fallback). Measured: a background click that
+  took ~2.5s via the old script path now completes in **1.2s** end to end, with
+  the window frame highlight as a bonus.
+- **Uniform refusal envelope**: dsbox input refusals (out-of-bounds point, dead
+  handle, no explicit target) always carry `cursorMoved: false`, matching the
+  old script, so a refusal can never read as a delivery.
+- Dead-handle handling aligned with the old engine: a hwnd that resolves to an
+  empty rect is refused with the same out-of-bounds message instead of a
+  different error text.
+
 ## 0.1.23
 
 - **New companion CLI: dsbox** (`G:\dsbox\dsbox.cmd` + `dsbox.ps1`) — a from-scratch,

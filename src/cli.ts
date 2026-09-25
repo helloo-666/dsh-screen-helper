@@ -452,6 +452,13 @@ export async function runBackgroundInput(params: {
   hwnd?: number
   timeoutMs: number
 }): Promise<Record<string, unknown> | null> {
+  // Prefer the dsbox CLI (fast startup, frame highlight on clicks, explicit
+  // target enforcement) when it is next to the configured CLI or on PATH;
+  // fall back to the bundled PowerShell script otherwise.
+  const dsbox = resolveDsboxPath()
+  if (dsbox) {
+    return runBackgroundInputViaDsbox(dsbox, params)
+  }
   const script = resolveScriptPath('background-input.ps1')
   if (!script) return null
   const argv: string[] = [
@@ -488,6 +495,92 @@ export async function runBackgroundInput(params: {
   } catch {
     return null
   }
+}
+
+/**
+ * Locate the dsbox CLI: next to the helper script directory, the repo root
+ * sibling `G:\dsbox`, or PATH. Returns the .cmd launcher path or null.
+ */
+function resolveDsboxPath(): string | null {
+  const here = dirname(fileURLToPath(import.meta.url))
+  const candidates = [
+    join(here, 'scripts', 'dsbox.cmd'),
+    join(here, '..', 'scripts', 'dsbox.cmd'),
+    'G:\\dsbox\\dsbox.cmd',
+  ]
+  for (const c of candidates) {
+    if (existsSync(c)) return c
+  }
+  return null
+}
+
+/** Map plugin background-plan actions onto dsbox CLI subcommands. */
+async function runBackgroundInputViaDsbox(
+  dsboxPath: string,
+  params: {
+    action: 'click' | 'type' | 'key' | 'probe' | 'scroll'
+    x?: number
+    y?: number
+    text?: string
+    key?: number
+    amount?: number
+    title?: string
+    hwnd?: number
+    timeoutMs: number
+  },
+): Promise<Record<string, unknown> | null> {
+  const sub: string[] = []
+  switch (params.action) {
+    case 'click': sub.push('mouse', 'click'); break
+    case 'scroll': sub.push('mouse', 'scroll'); break
+    case 'type': sub.push('keyboard', 'write'); break
+    case 'key':
+    case 'probe':
+      // dsbox does not implement key/probe yet; let the caller fall back.
+      return null
+  }
+  const argv = [...sub]
+  if (params.x !== undefined && params.y !== undefined) argv.push('--point', `${params.x},${params.y}`)
+  if (params.text !== undefined) argv.push('--text', params.text)
+  if (params.amount !== undefined) argv.push('--amount', String(params.amount))
+  if (params.title !== undefined) argv.push('--title', params.title)
+  if (params.hwnd !== undefined) argv.push('--hwnd', String(params.hwnd))
+
+  const { spawn } = await import('node:child_process')
+  return new Promise((resolve) => {
+    let stdout = ''
+    let settled = false
+    const finish = (v: Record<string, unknown> | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(v)
+    }
+    let child
+    try {
+      child = spawn('cmd.exe', ['/d', '/s', '/c', dsboxPath, ...argv], {
+        shell: false,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    } catch {
+      finish(null)
+      return
+    }
+    child.stdout?.setEncoding('utf8')
+    child.stdout?.on('data', (chunk: string) => { stdout += chunk })
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      finish(null)
+    }, Math.min(params.timeoutMs, 30_000))
+    child.on('error', () => finish(null))
+    child.on('close', () => {
+      const raw = stdout.trim()
+      const start = raw.indexOf('{')
+      if (start < 0) { finish(null); return }
+      try { finish(JSON.parse(raw.slice(start)) as Record<string, unknown>) } catch { finish(null) }
+    })
+  })
 }
 
 /**

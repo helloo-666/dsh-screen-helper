@@ -22,3 +22,13 @@ if (!existsSync(src)) {
 mkdirSync(destDir, { recursive: true })
 copyFileSync(src, dest)
 console.log('copy-helpers: shipped background-input.ps1 ->', dest)
+
+// Ship the dsbox launcher + implementation alongside, so the plugin can route
+// background delivery through it when the bundled copy exists.
+const dsboxSrc = join(root, 'scripts', 'dsbox.cmd')
+const dsboxImpl = join(root, 'scripts', 'dsbox.ps1')
+if (existsSync(dsboxSrc) && existsSync(dsboxImpl)) {
+  copyFileSync(dsboxSrc, join(destDir, 'dsbox.cmd'))
+  copyFileSync(dsboxImpl, join(destDir, 'dsbox.ps1'))
+  console.log('copy-helpers: shipped dsbox.cmd/ps1 ->', destDir)
+}
