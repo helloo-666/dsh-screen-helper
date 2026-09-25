@@ -1747,7 +1747,7 @@ async function panelTouch(action: string, argv: readonly string[]): Promise<void
         panelState.done = 0
         panelState.steps = []
       })
-    }, 6_000)
+    }, 30_000)
   } catch { }
 }
 async function dispatch(params: {

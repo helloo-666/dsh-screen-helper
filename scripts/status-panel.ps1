@@ -1,128 +1,91 @@
 ﻿param([string]$Title = 'AI 任务', [string]$StateFile = '')
-# Codex-style task panel: a small always-on-top card pinned under the top
-# centre, showing the task title, the current step, and a spinner-ish dot.
-# Reads $StateFile (JSON: {step, done, total, current}) every 300ms and
-# repaints. Exit when the file contains "stop": true or after 10 min.
-Add-Type -AssemblyName System.Drawing
+$Title = $Title.Trim(@("'", '"'))
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -Name PN -Namespace DPN -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr CreateWindowExW(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr p, IntPtr m, IntPtr i, IntPtr prm); [DllImport("user32.dll")] public static extern bool DestroyWindow(IntPtr h); [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr h, uint key, byte a, uint f); [DllImport("user32.dll")] public static extern int SetWindowLongW(IntPtr h, int i, int v); [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr h); [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr h, IntPtr dc);'
+Add-Type -AssemblyName System.Drawing
+Add-Type -Name RD -Namespace DRD -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags); [DllImport("user32.dll")] public static extern int SetWindowLongW(IntPtr h, int i, int v); [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int val, int size);'
 
-$ex = [uint32]0x00080000 -bor [uint32]0x00000020 -bor [uint32]0x00000080 -bor [uint32]0x08000000
-$wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$w = 340; $h = 92
-$x = [int](($wa.Width - $w) / 2); $y = $wa.Y + 8
-$ov = [DPN.PN]::CreateWindowExW($ex, 'Static', 'dsbox-panel', [uint32]'0x90000000', $x, $y, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
-if ($ov -eq [IntPtr]::Zero) { Write-Error 'panel window failed'; exit 1 }
-[void][DPN.PN]::SetWindowLongW($ov, -20, [int]$ex)
+$form = New-Object System.Windows.Forms.Form
+$form.Text = 'AI'
+$form.Size = New-Object System.Drawing.Size(400, 120)
+$form.StartPosition = 'Manual'
+$form.Location = New-Object System.Drawing.Point(760, 12)
+$form.TopMost = $true
+$form.FormBorderStyle = 'None'
+$form.BackColor = [System.Drawing.Color]::FromArgb(28, 28, 32)
+$form.ShowInTaskbar = $false
 
-$bgColor = [System.Drawing.Color]::FromArgb(235, 24, 24, 28)
-$accent = [System.Drawing.Color]::FromArgb(255, 255, 170, 40)
-$white = [System.Drawing.Color]::FromArgb(255, 235, 235, 240)
-$muted = [System.Drawing.Color]::FromArgb(255, 150, 150, 160)
+$radius = 16
+$path = New-Object System.Drawing.Drawing2D.GraphicsPath
+$path.AddArc(0, 0, $radius * 2, $radius * 2, 180, 90)
+$path.AddArc($form.ClientSize.Width - $radius * 2, 0, $radius * 2, $radius * 2, 270, 90)
+$path.AddArc($form.ClientSize.Width - $radius * 2, $form.ClientSize.Height - $radius * 2, $radius * 2, $radius * 2, 0, 90)
+$path.AddArc(0, $form.ClientSize.Height - $radius * 2, $radius * 2, $radius * 2, 90, 90)
+$path.CloseFigure()
+$form.Region = New-Object System.Drawing.Region($path)
 
-function Render-Summary([string]$Text) {
-  # summary card: taller layout with wrapped lines, shown before closing
-  $bmp = New-Object System.Drawing.Bitmap($w, $h + 60)
-  $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
-  $bg = New-Object System.Drawing.SolidBrush($bgColor)
-  $g.FillRectangle($bg, 0, 0, $w, $h + 60)
-  $ftH = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
-  $ftB = New-Object System.Drawing.Font('Microsoft YaHei UI', 8)
-  $cA = New-Object System.Drawing.SolidBrush($accent)
-  $cW = New-Object System.Drawing.SolidBrush($white)
-  $g.DrawString('任务完成', $ftH, $cA, 12, 8)
-  $y = 32
-  $maxChars = 26
-  for ($i = 0; $i -lt $Text.Length; $i += $maxChars) {
-    $line = $Text.Substring($i, [Math]::Min($maxChars, $Text.Length - $i))
-    $g.DrawString($line, $ftB, $cW, 12, $y)
-    $y += 18
-  }
-  $g.Dispose(); $bmp.Dispose(); $bg.Dispose(); $ftH.Dispose(); $ftB.Dispose(); $cA.Dispose(); $cW.Dispose()
-  $hdc = [DPN.PN]::GetDC($ov)
-  $gdc = [System.Drawing.Graphics]::FromHdc($hdc)
-  $gdc.DrawImage($bmp, 0, 0, $w, $h + 60)
-  $gdc.Dispose()
-  [void][DPN.PN]::ReleaseDC($ov, $hdc)
-}
+try {
+  $attr = 2
+  $pref = 1
+  [void][DRD.RD]::DwmSetWindowAttribute($form.Handle, $attr, [ref]$pref, 4)
+} catch { }
 
-function Render([string]$step, [int]$done, [int]$total, [bool]$finished, $stepList = $null) {
-  $bmp = New-Object System.Drawing.Bitmap($w, $h)
-  $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
-  $bg = New-Object System.Drawing.SolidBrush($bgColor)
-  $g.FillRectangle($bg, 0, 0, $w, $h)
-  $ftTitle = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
-  $ftStep = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
-  $cTitle = New-Object System.Drawing.SolidBrush($accent)
-  $cWhite = New-Object System.Drawing.SolidBrush($white)
-  $cMuted = New-Object System.Drawing.SolidBrush($muted)
-  $g.DrawString('AI', $ftTitle, $cTitle, 12, 8)
-  $g.DrawString($Title, $ftTitle, $cWhite, 34, 8)
-  $progress = if ($total -gt 0) { "$done/$total" } else { '' }
-  $g.DrawString($progress, $ftTitle, $cMuted, $w - 60, 8)
-  $dotBrush = New-Object System.Drawing.SolidBrush($(if ($finished) { [System.Drawing.Color]::FromArgb(255, 80, 220, 120) } else { $accent }))
-  if ($stepList) {
-    # list mode: each step with a state marker, done=✓ active=● pending=○
-    $ly = 36
-    foreach ($s in $stepList) {
-      $marker = if ($s.state -eq 'done') { '✓' } elseif ($s.state -eq 'active') { '●' } else { '○' }
-      $mColor = if ($s.state -eq 'done') { [System.Drawing.Color]::FromArgb(255, 80, 220, 120) } elseif ($s.state -eq 'active') { $accent } else { $muted }
-      $mBrush = New-Object System.Drawing.SolidBrush($mColor)
-      $tBrush = if ($s.state -eq 'pending') { $cMuted } else { $cWhite }
-      $g.DrawString($marker, $ftStep, $mBrush, 12, $ly)
-      $g.DrawString($s.text, $ftStep, $tBrush, 32, $ly)
-      $mBrush.Dispose(); $tBrush.Dispose()
-      $ly += 20
-    }
-  } else {
-    $g.FillEllipse($dotBrush, 14, 40, 10, 10)
-    $g.DrawString($step, $ftStep, $cWhite, 34, 36)
-  }
-  $barBrush = New-Object System.Drawing.SolidBrush($accent)
-  $barBg = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 50, 50, 56))
-  $g.FillRectangle($barBg, 12, 68, $w - 24, 5)
-  $frac = if ($total -gt 0) { [Math]::Min(1.0, $done / $total) } else { 0.3 }
-  $g.FillRectangle($barBrush, 12, 68, [int](($w - 24) * $frac), 5)
-  $g.Dispose(); $bmp.Dispose(); $bg.Dispose(); $ftTitle.Dispose(); $ftStep.Dispose()
-  $cTitle.Dispose(); $cWhite.Dispose(); $cMuted.Dispose(); $dotBrush.Dispose(); $barBrush.Dispose(); $barBg.Dispose()
-  # draw the freshly rendered bitmap
-  $hdc = [DPN.PN]::GetDC($ov)
-  $gdc = [System.Drawing.Graphics]::FromHdc($hdc)
-  $tmp = New-Object System.Drawing.Bitmap($w, $h)
-  $gtmp = [System.Drawing.Graphics]::FromImage($tmp)
-  $gtmp.DrawImage($bmp, 0, 0)
-  $gtmp.Dispose()
-  $gdc.DrawImage($tmp, 0, 0)
-  $gdc.Dispose(); $tmp.Dispose()
-  [void][DPN.PN]::ReleaseDC($ov, $hdc)
-}
+$lblAI = New-Object System.Windows.Forms.Label
+$lblAI.Text = 'AI'
+$lblAI.ForeColor = [System.Drawing.Color]::FromArgb(255, 255, 170, 40)
+$lblAI.Font = New-Object System.Drawing.Font('Segoe UI', 11, [System.Drawing.FontStyle]::Bold)
+$lblAI.Location = New-Object System.Drawing.Point(20, 12)
+$lblAI.AutoSize = $true
+$form.Controls.Add($lblAI)
 
-Render '准备中…' 0 0 $false
-[void][DPN.PN]::SetLayeredWindowAttributes($ov, 0, 240, 0x2)
+$lblTitle = New-Object System.Windows.Forms.Label
+$lblTitle.Text = $Title
+$lblTitle.ForeColor = [System.Drawing.Color]::White
+$lblTitle.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+$lblTitle.Location = New-Object System.Drawing.Point(48, 13)
+$lblTitle.AutoSize = $true
+$form.Controls.Add($lblTitle)
 
-$deadline = (Get-Date).AddMinutes(10)
-while ((Get-Date) -lt $deadline) {
-  if ($StateFile -and (Test-Path $StateFile)) {
+$lblStep = New-Object System.Windows.Forms.Label
+$lblStep.Text = '准备中…'
+$lblStep.ForeColor = [System.Drawing.Color]::FromArgb(255, 200, 200, 210)
+$lblStep.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
+$lblStep.Location = New-Object System.Drawing.Point(20, 48)
+$lblStep.AutoSize = $true
+$form.Controls.Add($lblStep)
+
+$progress = New-Object System.Windows.Forms.ProgressBar
+$progress.Style = 'Continuous'
+$progress.Location = New-Object System.Drawing.Point(20, 84)
+$progress.Size = New-Object System.Drawing.Size(360, 6)
+$progress.Value = 0
+$form.Controls.Add($progress)
+
+$form.Show()
+
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 300
+$timer.Add_Tick({
+  if (Test-Path $StateFile) {
     try {
-      $st = Get-Content $StateFile -Raw | ConvertFrom-Json
-      if ($st.stop) { break }
-      Render $st.step $st.done $st.total $([bool]$st.finished) $st.steps
-      if ($st.summary) {
-        Render-Summary $st.summary
-        Start-Sleep -Milliseconds 3000
-        break
-      }
+      $raw = [System.IO.File]::ReadAllText($StateFile)
+      if ($raw.Length -gt 0 -and [int][char]$raw[0] -eq 0xFEFF) { $raw = $raw.Substring(1) }
+      $st = $raw | ConvertFrom-Json
+      $lblStep.Text = $st.step
+      $progress.Value = [Math]::Min(100, [int](($st.done / [Math]::Max(1, $st.total)) * 100))
       if ($st.finished) {
         Start-Sleep -Milliseconds 2500
-        break
+        $form.Close()
       }
     } catch { }
   }
-  Start-Sleep -Milliseconds 300
-}
-[void][DPN.PN]::DestroyWindow($ov)
-Write-Host 'panel closed'
+})
+$timer.Start()
+
+$topTimer = New-Object System.Windows.Forms.Timer
+$topTimer.Interval = 1000
+$topTimer.Add_Tick({
+  [void][DRD.RD]::SetWindowPos($form.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x0043)
+})
+$topTimer.Start()
+
+[System.Windows.Forms.Application]::Run($form)

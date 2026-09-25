@@ -302,7 +302,7 @@ function Show-ScrollCue([int]$Cx, [int]$Cy, [int]$Amount) {
     Add-Type -AssemblyName System.Drawing
     $w = 44; $h = 44
     $ex = [uint32]0x00080000 -bor [uint32]0x00000020 -bor [uint32]0x00000080 -bor [uint32]0x08000000
-    $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-scroll', [uint32]'0x90000000', $Cx - 22, $Cy - 22, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
+    $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-scroll', [uint32]2415919104, $Cx - 22, $Cy - 22, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
     if ($ov -eq [IntPtr]::Zero) { return }
     [void][N]::SetWindowLongW($ov, -20, [int]$ex)
     $bmp = New-Object System.Drawing.Bitmap($w, $h)
@@ -360,7 +360,7 @@ function Show-StatusBadge([string]$Text, [int]$Ms = 1800, [int]$AnchorX = -1, [i
       $x = [int](($wa.Width - $w) / 2); $y = $wa.Y + 8
     }
     $ex = [uint32]0x00080000 -bor [uint32]0x00000020 -bor [uint32]0x00000080 -bor [uint32]0x08000000
-    $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-status', [uint32]'0x90000000', $x, $y, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
+    $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-status', [uint32]2415919104, $x, $y, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
     if ($ov -eq [IntPtr]::Zero) { return }
     [void][N]::SetWindowLongW($ov, -20, [int]$ex)
     $bmp = New-Object System.Drawing.Bitmap($w, $h)
@@ -406,7 +406,7 @@ function Show-TypeBadge([string]$Char, [int]$X, [int]$Y) {
     Add-Type -AssemblyName System.Drawing
     $w = 34; $h = 34
     $ex = [uint32]0x00080000 -bor [uint32]0x00000020 -bor [uint32]0x00000080 -bor [uint32]0x08000000
-    $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-type', [uint32]'0x90000000', $X - 17, $Y - 46, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
+    $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-type', [uint32]2415919104, $X - 17, $Y - 46, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
     if ($ov -eq [IntPtr]::Zero) { return }
     [void][N]::SetWindowLongW($ov, -20, [int]$ex)
     $bmp = New-Object System.Drawing.Bitmap($w, $h)
@@ -439,7 +439,7 @@ function Show-AiCursorAnimated([int]$ToX, [int]$ToY, [int]$FromX = -1, [int]$Fro
     $ex = [uint32]0x00080000 -bor [uint32]0x00000020 -bor [uint32]0x00000080 -bor [uint32]0x08000000
     $startX = if ($FromX -ge 0) { $FromX } else { $ToX }
     $startY = if ($FromY -ge 0) { $FromY } else { $ToY }
-    $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-aicursor', [uint32]'0x90000000', $startX - 2, $startY - 2, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
+    $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-aicursor', [uint32]2415919104, $startX - 2, $startY - 2, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
     if ($ov -eq [IntPtr]::Zero) { return }
     [void][N]::SetWindowLongW($ov, -20, [int]$ex)
     $bmp = New-Object System.Drawing.Bitmap($w, $h)
