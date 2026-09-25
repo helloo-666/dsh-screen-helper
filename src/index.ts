@@ -40,6 +40,8 @@ import {
 
 export const name = 'screen-helper'
 export const inject = ['tools']
+// Optional DSH services: betterSidebar (Tab 插件) is injected when the host
+// provides it; the plugin degrades gracefully when absent.
 
 /** Plugin configuration, validated and defaulted by Cordis via the schema. */
 /**
@@ -288,6 +290,19 @@ function prunePending(): void {
 
 export function apply(ctx: Context, config: Config): void {
   const cliPath = resolveCliPath(config.cliPath)
+
+  // DSH Tab 插件（侧边栏）：宿主提供 betterSidebar 服务时，注册一个「AI 屏幕
+  // 助手」侧边栏页面，实时显示 AI 正在操作的目标与步骤。宿主未提供时静默降级。
+  type SidebarReg = { register: (page: unknown) => () => void }
+  const sidebarHost = (ctx as Context & { betterSidebar?: SidebarReg }).betterSidebar
+  if (sidebarHost) {
+    const panelPage = {
+      id: 'ai-screen-helper',
+      title: 'AI 屏幕',
+      render: () => null,
+    }
+    sidebarHost.register(panelPage)
+  }
 
   ctx.tools.register(
     defineTool({
