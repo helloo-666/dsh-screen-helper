@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.22
+
+- **`ui.click` OCR is region-limited to the target window when `--hwnd`/`--title`
+  is given.** SAH's full-screen OCR costs 15–20s per call; OCR of a window-sized
+  region runs 3–6x faster (measured 2.8s for a 300×100 strip vs 15.9s full
+  screen). The scope rect (0.1.14) is now resolved *before* OCR and passed as
+  `--region`, so locating and scoping share one call. No change for calls
+  without a target window (still full-screen), and a full-screen window rect
+  (e.g. the desktop) naturally still scans everything.
+- **Fixed: `ui.click` passed `--hwnd`/`--title` through to `ui.find`, which
+  rejects them (exit 1).** Any `ui.click --name X --hwnd H` died at the identity
+  step with a CLI usage error before reaching OCR. Those flags are now stripped
+  from the `ui.find` invocation; they belong to delivery targeting only.
+
 ## 0.1.21
 
 - **Defense-in-depth: the background script now refuses target-less typing/keys.**

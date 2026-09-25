@@ -601,8 +601,19 @@ async function runUiClick(params: {
   // Step 1: confirm the control by UI-tree identity. A --role constraint can
   // miss a control that is present but not currently exposed under that exact
   // role (UIA visibility flakiness), so retry once without the role filter.
-  // ui.click-only flags (--verify/--button) are stripped before reaching ui.find.
-  const uiFindArgs = argv.filter((a) => a !== '--verify' && a !== '--button')
+  // ui.click-only flags (--verify/--button) are stripped before reaching ui.find,
+  // and so are --hwnd/--title: they are delivery-targeting flags the CLI's
+  // ui.find rejects outright, and identity lookup is screen-wide anyway.
+  const uiFindArgs: string[] = []
+  {
+    let skip = false
+    for (const a of argv) {
+      if (skip) { skip = false; continue }
+      if (a === '--verify' || a === '--button') continue
+      if (a === '--hwnd' || a === '--title') { skip = true; continue }
+      uiFindArgs.push(a as string)
+    }
+  }
   let findOutcome = await runCli({
     cliPath: params.cliPath,
     invocation: { path: ['ui', 'find'], args: uiFindArgs },
@@ -672,7 +683,19 @@ async function runUiClick(params: {
       stderr: null,
     }
   }
-  const recArgs = ['--target', (pickTarget(argv) ?? 'virtual-screen')]
+  // Resolve the delivery-target window BEFORE OCR: when it is known, OCR can be
+  // region-limited to that window (a small region runs ~5x faster than a full
+  // screen scan — 2.8s vs 16s measured) and the result is scoped in the same
+  // stroke. Otherwise the whole screen is scanned.
+  const scopeRect = await resolveTargetRect({
+    cliPath: params.cliPath,
+    hwnd: numericFlag(argv, '--hwnd'),
+    title: flagValue(argv, '--title'),
+    timeoutMs: params.config.timeoutMs,
+    signal: params.exec.signal,
+  })
+  const recArgs: string[] = ['--target', pickTarget(argv) ?? 'virtual-screen']
+  if (scopeRect) recArgs.push('--region', scopeRect.join(','))
   const rec = await runCli({
     cliPath: params.cliPath,
     invocation: { path: ['screen', 'recognize'], args: recArgs },
@@ -702,13 +725,6 @@ async function runUiClick(params: {
   // When the caller scoped the click to a window, only accept text inside it.
   // Otherwise the whole screen is searched and the first match may sit outside
   // the target —which the out-of-bounds guard then rightly refuses.
-  const scopeRect = await resolveTargetRect({
-    cliPath: params.cliPath,
-    hwnd: numericFlag(argv, '--hwnd'),
-    title: flagValue(argv, '--title'),
-    timeoutMs: params.config.timeoutMs,
-    signal: params.exec.signal,
-  })
   let scopedOut = 0
   if (scopeRect) {
     const [x1, y1, x2, y2] = scopeRect
