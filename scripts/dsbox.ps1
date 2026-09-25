@@ -60,6 +60,7 @@ public static class N {
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
   public delegate bool EnumCb(IntPtr h, IntPtr l);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumCb cb, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr p, EnumCb cb, IntPtr l);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
@@ -533,13 +534,121 @@ switch ($rest[0]) {
     }
   }
   'ui' {
-    # ui find / ui tree: UIA tree access is not implemented in dsbox; report a
-    # structured not-found so the plugin's identity step falls through to OCR
-    # instead of dying on a usage error.
+    # UIA tree access via System.Windows.Automation (fast: ~200ms window scan,
+    # ~800ms for a few thousand descendants).
     if ($rest.Count -ge 2 -and $rest[1] -eq 'find') {
-      Write-JsonOut @{ ok = $true; status = 'not_found'; count = 0; matches = @() }
+      $name = ''; $role = ''; $matchMode = 'contains'; $hwnd = 0L; $title = ''
+      for ($i = 2; $i -lt $rest.Count; $i++) {
+        if ($rest[$i] -eq '--name' -and $i+1 -lt $rest.Count) { $name = $rest[$i+1]; $i++ }
+        elseif ($rest[$i] -eq '--role' -and $i+1 -lt $rest.Count) { $role = $rest[$i+1]; $i++ }
+        elseif ($rest[$i] -eq '--match' -and $i+1 -lt $rest.Count) { $matchMode = $rest[$i+1]; $i++ }
+        elseif ($rest[$i] -eq '--hwnd' -and $i+1 -lt $rest.Count) { $hwnd = [long]$rest[$i+1]; $i++ }
+        elseif ($rest[$i] -eq '--title' -and $i+1 -lt $rest.Count) { $title = $rest[$i+1]; $i++ }
+      }
+      if (-not $name -and -not $role) { Fail 'usage: dsbox ui find --name N [--role R]' 2 }
+      Add-Type -AssemblyName UIAutomationClient
+      Add-Type -AssemblyName UIAutomationTypes
+      # Scope to one window's subtree when a target is given (fewer false
+      # matches from unrelated apps); otherwise scan every top-level window.
+      if ($hwnd -gt 0 -or $title) {
+        $t = Resolve-TargetWindow $title $hwnd
+        $roots = @([System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$t.handle))
+      } else {
+        $root = [System.Windows.Automation.AutomationElement]::RootElement
+        $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window)
+        $roots = @($root.FindAll([System.Windows.Automation.TreeScope]::Children, $cond))
+      }
+      $found = New-Object System.Collections.ArrayList
+      foreach ($w in $roots) {
+        $el = $null
+        if ($name) {
+          $prop = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $name)
+          if ($matchMode -eq 'exact') { $el = $w.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $prop) }
+          else {
+            # substring match: UIA has no contains-condition, scan manually
+            $all = $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+            foreach ($e in $all) {
+              $n = $e.Current.Name
+              if ($n -and $n -like "*$name*") { $el = $e; break }
+            }
+          }
+        }
+        if ($el) {
+          $r = $el.Current.BoundingRectangle
+          if ($r.Width -gt 0 -and $r.Height -gt 0) {
+            [void]$found.Add([PSCustomObject]@{
+              name = $el.Current.Name
+              role = $el.Current.ControlType.ProgrammaticName -replace '^ControlType\.'
+              cls = $el.Current.ClassName
+              box = @([int]$r.X, [int]$r.Y, [int]($r.X+$r.Width), [int]($r.Y+$r.Height))
+              center = @([int]($r.X+$r.Width/2), [int]($r.Y+$r.Height/2))
+            })
+          }
+        }
+      }
+      $status = 'not_found'
+      if ($found.Count -gt 1) { $status = 'ambiguous' }
+      elseif ($found.Count -eq 1) { $status = 'matched' }
+      Write-JsonOut @{ ok = $true; status = $status; count = $found.Count; matches = @($found) }
+    } elseif ($rest.Count -ge 2 -and $rest[1] -eq 'tree') {
+      Fail 'dsbox ui tree is not implemented; use ui find' 2
     } else {
-      Fail "dsbox ui supports only 'find' (degraded); use find_exact/OCR instead" 2
+      Fail 'usage: dsbox ui find --name N [--role R]' 2
+    }
+  }
+  'probe' {
+    # Read-only driveability precheck: child HWND + UIA element counts.
+    $hwnd = 0L; $title = ''
+    for ($i = 1; $i -lt $rest.Count; $i++) {
+      if ($rest[$i] -eq '--hwnd' -and $i+1 -lt $rest.Count) { $hwnd = [long]$rest[$i+1]; $i++ }
+      elseif ($rest[$i] -eq '--title' -and $i+1 -lt $rest.Count) { $title = $rest[$i+1]; $i++ }
+    }
+    $t = Resolve-TargetWindow $title $hwnd
+    $h = [IntPtr]$t.handle
+    # Same callback scoping pattern as Get-WindowList: plain variables resolve
+    # to this scope when the delegate runs; $script:-prefixed ones would not.
+    $childCount = 0
+    $children = New-Object System.Collections.ArrayList
+    $cb = [N+EnumCb] {
+      param($ch, $l)
+      # value types mutate a callback-local copy; append to a list instead
+      if ($children.Count -lt 12) {
+        [void]$children.Add([PSCustomObject]@{ hwnd = $ch.ToInt64(); cls = [N]::ClassOf($ch) })
+      } else {
+        [void]$children.Add('overflow')  # count-only marker beyond the first 12
+      }
+      return $true
+    }
+    [void][N]::EnumChildWindows($h, $cb, [IntPtr]::Zero)
+    $overflow = @($children | Where-Object { $_ -eq 'overflow' }).Count
+    if ($overflow -gt 0) { $children.RemoveRange(12, $overflow) }
+    $childCount = $children.Count + $overflow
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    $uiaCount = 0
+    try {
+      $el = [System.Windows.Automation.AutomationElement]::FromHandle($h)
+      $all = $el.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+      $uiaCount = $all.Count
+    } catch { $uiaCount = 0 }
+    $backgroundCapable = ($childCount -gt 0) -or ($uiaCount -gt 50)
+    if ($childCount -gt 0) {
+      $diagnosis = 'standard Win32 window: background message delivery should work'
+    } elseif ($uiaCount -gt 50) {
+      $diagnosis = 'accessible tree present but few native child HWNDs: message delivery may work depending on the framework'
+    } else {
+      $diagnosis = 'self-drawn UI (no child HWNDs, few accessible elements): background window messages are usually ignored; drive with --input-mode real or use the frame-highlighted dsbox click'
+    }
+    Write-JsonOut @{
+      ok = $true
+      action = 'probe'
+      hwnd = $t.handle
+      cls = [N]::ClassOf($h)
+      childCount = $childCount
+      children = @($children)
+      uiaElementCount = $uiaCount
+      backgroundCapable = $backgroundCapable
+      diagnosis = $diagnosis
     }
   }
   'health' { Cmd-Health }

@@ -303,7 +303,10 @@ test('ui.click falls through to OCR when the UI tree does not confirm the contro
   const data = v.data;
   assert.ok(data && typeof data === 'object');
   assert.notEqual(data.step, 'ui.find', 'must not abort at ui.find when there is text to OCR');
-  assert.equal(data.step, 'screen.recognize');
+  // dsbox (bundled with the plugin) runs the whole pipeline, so a silent tree
+  // now flows all the way through OCR to the find_exact ranking step; with
+  // SAH-only the run stops at screen.recognize. Both report identity unconfirmed.
+  assert.ok(data.step === 'find_exact' || data.step === 'screen.recognize', `unexpected step ${data.step}`);
   assert.equal(data.identityConfirmed, false);
 });
 

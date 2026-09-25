@@ -29,10 +29,12 @@ import {
   findExact,
   isDestructive,
   resolveCliPath,
+  resolveDsboxPath,
   resolveForegroundApp,
   runBackgroundInput,
   runCli,
   stringifyForModel,
+  type OcrItem,
   type RiskTier,
 } from './cli.js'
 
@@ -601,21 +603,27 @@ async function runUiClick(params: {
   // Step 1: confirm the control by UI-tree identity. A --role constraint can
   // miss a control that is present but not currently exposed under that exact
   // role (UIA visibility flakiness), so retry once without the role filter.
-  // ui.click-only flags (--verify/--button) are stripped before reaching ui.find,
-  // and so are --hwnd/--title: they are delivery-targeting flags the CLI's
-  // ui.find rejects outright, and identity lookup is screen-wide anyway.
+  // ui.click-only flags (--verify/--button) are stripped before reaching ui.find.
+  // --hwnd/--title: SAH's ui.find rejects them outright, but dsbox's
+  // implementation scopes the UIA scan to that window's subtree —far fewer
+  // false matches from unrelated apps— so they are kept when dsbox is present.
+  const dsboxActive = resolveDsboxPath() !== null
   const uiFindArgs: string[] = []
   {
     let skip = false
     for (const a of argv) {
       if (skip) { skip = false; continue }
       if (a === '--verify' || a === '--button') continue
-      if (a === '--hwnd' || a === '--title') { skip = true; continue }
+      if ((a === '--hwnd' || a === '--title') && !dsboxActive) { skip = true; continue }
       uiFindArgs.push(a as string)
     }
   }
+  // When dsbox is present it owns the whole ui.click pipeline (identity via
+  // scoped UIA, OCR fallback, click delivery), so route every step to it —
+  // not just the delivery. `params.cliPath` may still point at SAH.
+  const enginePath = (dsboxActive ? resolveDsboxPath() : null) ?? params.cliPath
   let findOutcome = await runCli({
-    cliPath: params.cliPath,
+    cliPath: enginePath,
     invocation: { path: ['ui', 'find'], args: uiFindArgs },
     timeoutMs: params.config.timeoutMs,
     signal: params.exec.signal,
@@ -629,7 +637,7 @@ async function runUiClick(params: {
     }
     if (cleaned.length !== uiFindArgs.length) {
       findOutcome = await runCli({
-        cliPath: params.cliPath,
+        cliPath: enginePath,
         invocation: { path: ['ui', 'find'], args: cleaned },
         timeoutMs: params.config.timeoutMs,
         signal: params.exec.signal,
@@ -639,6 +647,18 @@ async function runUiClick(params: {
   const findJson = findOutcome.ok ? (findOutcome.json as Record<string, unknown> | undefined) : undefined
   const status = typeof findJson?.status === 'string' ? findJson.status : 'not_found'
   const count = typeof findJson?.count === 'number' ? findJson.count : 0
+
+  // dsbox's ui.find returns element geometry (box/center); SAH's does not.
+  // When exactly one UIA element matches, clicking its own coordinates is
+  // strictly more accurate than OCR-guessing the label's pixel position —and
+  // it works for labels OCR misreads (low contrast, overlapping text).
+  const uiMatches = Array.isArray(findJson?.matches)
+    ? (findJson.matches as Array<{ name?: string; role?: string; box?: number[]; center?: number[] }>)
+    : []
+  const uiaTarget =
+    status === 'matched' && uiMatches.length === 1 && Array.isArray(uiMatches[0]?.center)
+      ? uiMatches[0]
+      : null
 
   // The UI tree is often empty or unhelpful: desktop icons, Electron and other
   // self-drawn apps expose little to no UIA. A silent tree therefore does not
@@ -664,7 +684,9 @@ async function runUiClick(params: {
     }
   }
 
-  // Step 2: locate on screen via word-level OCR, reusing find_exact's ranking.
+  // Step 2: locate on screen. With a unique UIA hit the element's own box is
+  // the target —no OCR round-trip needed. Otherwise fall back to word-level
+  // OCR and reuse find_exact's ranking.
   const query = name || role
   if (!query) {
     return {
@@ -688,85 +710,102 @@ async function runUiClick(params: {
   // screen scan — 2.8s vs 16s measured) and the result is scoped in the same
   // stroke. Otherwise the whole screen is scanned.
   const scopeRect = await resolveTargetRect({
-    cliPath: params.cliPath,
+    cliPath: enginePath,
     hwnd: numericFlag(argv, '--hwnd'),
     title: flagValue(argv, '--title'),
     timeoutMs: params.config.timeoutMs,
     signal: params.exec.signal,
   })
-  const recArgs: string[] = ['--target', pickTarget(argv) ?? 'virtual-screen']
-  if (scopeRect) recArgs.push('--region', scopeRect.join(','))
-  const rec = await runCli({
-    cliPath: params.cliPath,
-    invocation: { path: ['screen', 'recognize'], args: recArgs },
-    timeoutMs: params.config.timeoutMs,
-    signal: params.exec.signal,
-  })
-  if (!rec.ok) {
-    return {
-      action: params.action,
-      tier: params.tier,
-      executed: true,
-      blockedReason: null,
-      exitCode: rec.exitCode,
-      data: { step: 'screen.recognize', error: 'OCR failed', identityConfirmed } as unknown as JsonValue,
-      text: rec.message,
-      stderr: rec.stderr,
+
+  // UIA fast path: the unique element match already carries a pixel-accurate
+  // box/center in screen coordinates. Skip OCR entirely.
+  let target: OcrItem | null = null
+  let items: OcrItem[] = []
+  let recArgs: string[] = []
+  if (uiaTarget && Array.isArray(uiaTarget.box) && uiaTarget.box.length === 4) {
+    target = {
+      text: uiaTarget.name ?? query,
+      confidence: 1,
+      box: uiaTarget.box,
+      center: uiaTarget.center as number[],
     }
+  } else {
+    recArgs = ['--target', pickTarget(argv) ?? 'virtual-screen']
+    if (scopeRect) recArgs.push('--region', scopeRect.join(','))
+    const rec = await runCli({
+      cliPath: enginePath,
+      invocation: { path: ['screen', 'recognize'], args: recArgs },
+      timeoutMs: params.config.timeoutMs,
+      signal: params.exec.signal,
+    })
+    if (!rec.ok) {
+      return {
+        action: params.action,
+        tier: params.tier,
+        executed: true,
+        blockedReason: null,
+        exitCode: rec.exitCode,
+        data: { step: 'screen.recognize', error: 'OCR failed', identityConfirmed } as unknown as JsonValue,
+        text: rec.message,
+        stderr: rec.stderr,
+      }
+    }
+    items = ((rec.json as { items?: unknown } | undefined)?.items ?? []) as OcrItem[]
   }
-  const items = (rec.json as { items?: unknown } | undefined)?.items
-  let ranked = findExact(
-    Array.isArray(items)
-      ? (items as Array<{ text: string; confidence: number; box: number[]; center: number[] }>)
-      : [],
-    query,
-  )
 
   // When the caller scoped the click to a window, only accept text inside it.
   // Otherwise the whole screen is searched and the first match may sit outside
   // the target —which the out-of-bounds guard then rightly refuses.
   let scopedOut = 0
-  if (scopeRect) {
-    const [x1, y1, x2, y2] = scopeRect
-    const before = ranked.matches.length
-    // Score by overlap, not by whether the centre point is inside: a token whose
-    // box straddles the window border has its centre just outside and would be
-    // rejected by the bounds guard after being chosen. Prefer tokens fully
-    // inside, then fall back to the most-overlapping one.
-    const overlaps = ranked.matches.map((m) => {
-      const b = m.box ?? []
-      const bx1 = b[0] ?? m.center[0] ?? 0
-      const by1 = b[1] ?? m.center[1] ?? 0
-      const bx2 = b[2] ?? bx1
-      const by2 = b[3] ?? by1
-      const ix1 = Math.max(bx1, x1)
-      const iy1 = Math.max(by1, y1)
-      const ix2 = Math.min(bx2, x2)
-      const iy2 = Math.min(by2, y2)
-      const area = Math.max(0, ix2 - ix1) * Math.max(0, iy2 - iy1)
-      const boxArea = Math.max(1, (bx2 - bx1) * (by2 - by1))
-      const cx = m.center[0] ?? 0
-      const cy = m.center[1] ?? 0
-      return { m, area, frac: area / boxArea, inside: cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2 }
-    })
-    const contained = overlaps.filter((o) => o.inside && o.area > 0).map((o) => o.m)
-    if (contained.length > 0) {
-      scopedOut = before - contained.length
-      ranked = { query: ranked.query, count: contained.length, matches: contained }
-    } else {
-      const partial = overlaps.filter((o) => o.frac > 0)
-      scopedOut = before - partial.length
-      if (partial.length > 0) {
-        partial.sort((a, b) => b.frac - a.frac)
-        const best = partial.map((o) => o.m)
-        ranked = { query: ranked.query, count: best.length, matches: best }
+  let ranked: { query: string; count: number; matches: OcrItem[] } = { query, count: 0, matches: [] }
+  if (uiaTarget) {
+    ranked = { query, count: 1, matches: [target as { text: string; confidence: number; box: number[]; center: number[] }] }
+  } else {
+    ranked = findExact(items, query)
+    if (scopeRect) {
+      const [x1, y1, x2, y2] = scopeRect
+      const before = ranked.matches.length
+      // Score by overlap, not by whether the centre point is inside: a token whose
+      // box straddles the window border has its centre just outside and would be
+      // rejected by the bounds guard after being chosen. Prefer tokens fully
+      // inside, then fall back to the most-overlapping one.
+      const overlaps = ranked.matches.map((m) => {
+        const b = m.box ?? []
+        const bx1 = b[0] ?? m.center[0] ?? 0
+        const by1 = b[1] ?? m.center[1] ?? 0
+        const bx2 = b[2] ?? bx1
+        const by2 = b[3] ?? by1
+        const ix1 = Math.max(bx1, x1)
+        const iy1 = Math.max(by1, y1)
+        const ix2 = Math.min(bx2, x2)
+        const iy2 = Math.min(by2, y2)
+        const area = Math.max(0, ix2 - ix1) * Math.max(0, iy2 - iy1)
+        const boxArea = Math.max(1, (bx2 - bx1) * (by2 - by1))
+        const cx = m.center[0] ?? 0
+        const cy = m.center[1] ?? 0
+        return { m, area, frac: area / boxArea, inside: cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2 }
+      })
+      const contained = overlaps.filter((o) => o.inside && o.area > 0).map((o) => o.m)
+      if (contained.length > 0) {
+        scopedOut = before - contained.length
+        ranked = { query: ranked.query, count: contained.length, matches: contained }
+      } else {
+        const partial = overlaps.filter((o) => o.frac > 0)
+        scopedOut = before - partial.length
+        if (partial.length > 0) {
+          partial.sort((a, b) => b.frac - a.frac)
+          const best = partial.map((o) => o.m)
+          ranked = { query: ranked.query, count: best.length, matches: best }
+        }
       }
     }
   }
-  const target = ranked.matches[0]
+  target = ranked.matches[0] ?? null
   // With no UI-tree confirmation the click is only a guess from OCR. If several
   // on-screen tokens matched, silently taking the first one can hit the wrong
   // element —report the count and the alternatives so the caller knows.
+  // (A unique UIA hit bypasses this: its own coordinates are exact.)
+  const uiaLocated = uiaTarget !== null
   const ocrMatchCount = ranked.matches.length
   const ocrAmbiguous = !identityConfirmed && ocrMatchCount > 1
   const ocrAlternatives = ocrAmbiguous
@@ -862,7 +901,7 @@ async function runUiClick(params: {
     let verify: Record<string, unknown> = {}
     if (verifyRequested) {
       const after = await runCli({
-        cliPath: params.cliPath,
+        cliPath: enginePath,
         invocation: { path: ['screen', 'recognize'], args: recArgs },
         timeoutMs: params.config.timeoutMs,
         signal: params.exec.signal,
@@ -932,7 +971,7 @@ async function runUiClick(params: {
     const clickArgsBg = clickArgs
     if (noChildWindows && params.config.autoFallback) {
       const realClick = await runCli({
-        cliPath: params.cliPath,
+        cliPath: enginePath,
         invocation: { path: ['mouse', 'click'], args: clickArgsBg },
         timeoutMs: params.config.timeoutMs,
         signal: params.exec.signal,

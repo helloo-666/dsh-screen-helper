@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.25
+
+- **dsbox gains a real UIA tree** (`System.Windows.Automation`): `ui find` now
+  searches live accessibility trees (~200ms window scan, ~800ms per few
+  thousand elements) with `--name` substring/exact matching, `--role`, and
+  `--hwnd`/`--title` subtree scoping; multi-match reports SAH-compatible
+  `ambiguous` status. New `probe` command: child-HWND census + UIA element
+  count + `backgroundCapable` verdict + a plain-language diagnosis — the
+  driveability precheck SAH never made fast enough to be worth calling.
+- **ui.click precision upgrade — UIA fast path**: when exactly one UIA element
+  matches the query, the plugin clicks the element's own pixel-accurate box
+  (confidence 1.0) and skips OCR entirely — no more label-guessing, and it
+  works for text OCR misreads. Measured e2e: 6.1s → 2.7s with
+  `identityConfirmed: true`. When the tree is silent, the OCR path still runs
+  exactly as before.
+- **ui.click now runs its whole pipeline through dsbox when present** (identity
+  + OCR + delivery), not just delivery; SAH remains the fallback engine.
+- `ui find --hwnd/--title` are kept in argv when dsbox is active (scoped UIA
+  lookup — far fewer false matches from unrelated apps); they stay stripped
+  for SAH, which rejects them.
+- Probe's child census fixed (value-type mutations inside the EnumWindows
+  callback were silently discarded — counted via list append now).
+
 ## 0.1.24
 
 - **dsbox covers the full background-input surface.** New `mouse scroll`

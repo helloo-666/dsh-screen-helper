@@ -500,8 +500,10 @@ export async function runBackgroundInput(params: {
 /**
  * Locate the dsbox CLI: next to the helper script directory, the repo root
  * sibling `G:\dsbox`, or PATH. Returns the .cmd launcher path or null.
+ * Exported so the action router can branch on dsbox-specific capabilities
+ * (e.g. `ui find --hwnd` scoping, which SAH rejects).
  */
-function resolveDsboxPath(): string | null {
+export function resolveDsboxPath(): string | null {
   const here = dirname(fileURLToPath(import.meta.url))
   const candidates = [
     join(here, 'scripts', 'dsbox.cmd'),
