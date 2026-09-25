@@ -5,6 +5,41 @@
 
 ---
 
+## 2026-09-25 深夜 III（第 30 轮工作）✅ 已完成
+
+### 主题：ui tree —— agent 能"看懂"界面了
+
+| 改动 | 说明 |
+|------|------|
+| dsbox 新增 ui tree | 导出窗口的无障碍子树：每个元素带 depth/name/role/能力标记（Invoke=可点、Value=可写、Scroll=可滚等）/坐标 |
+| 修复虚元素崩溃 | 屏幕外/虚拟化元素的坐标是无穷大（∞），转 Int32 时溢出崩溃 —— 已钳制为 0 |
+
+### 实测（设置窗口，深度 4）
+
+`
+[Window] 设置
+  [Window] 设置 [Value]
+    [MenuBar] 系统
+    [Button] 最小化 [Invoke] / [Button] 最大化 [Invoke] / [Button] 关闭 [Invoke]
+    [Edit] 搜索框 [Value]
+    [Button] 返回 [Invoke]
+`
+
+agent 看一眼树就知道：哪些按钮能点（Invoke）、搜索框能写（Value）—— 配合 ui find（定位）+ ui invoke（操作）+ ui inspect（验证），完整的 UIA 工作流闭环：**看懂 → 定位 → 操作 → 验证**。
+
+### 发布
+
+- 45/45 测试 ✅
+- **v0.1.32 已发布**：https://github.com/helloo-666/dsh-screen-helper/releases/tag/v0.1.32
+- 装机副本已同步 ✅
+
+### 下一步候选
+
+- 插件接入 ui tree（新增 screen_automation 的读动作或作为 ui.click 的辅助）
+- 真实场景批量回归
+- README 卖点更新（零接触四通道 + 树导出）
+
+---
 ## 2026-09-25 深夜 II（第 29 轮工作）✅ 已完成
 
 ### 主题：mouse.scroll 自动走 UIA（插件侧接线）
