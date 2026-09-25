@@ -585,6 +585,12 @@ function Cmd-MouseClick($argv) {
   $cx = $point[0] - $cr.L; $cy = $point[1] - $cr.T
   $lp = [IntPtr]($cx -bor ($cy * 65536))
   $r1 = [IntPtr]::Zero; $r2 = [IntPtr]::Zero
+    # Chromium/Electron require a WM_MOUSEMOVE hover before they process a
+    # synthesized click; without it the click is silently ignored.
+    [void][N]::SendMessageTimeout($deepest, 0x0200, [IntPtr]::Zero, $lp, [N]::SMTO_ABORTIFHUNG, 2000, [ref]$r1)
+    Start-Sleep -Milliseconds 80
+    [void][N]::SendMessageTimeout($deepest, 0x0200, [IntPtr]::Zero, $lp, [N]::SMTO_ABORTIFHUNG, 2000, [ref]$r1)
+    Start-Sleep -Milliseconds 120
   $s1 = [N]::SendMessageTimeout($deepest, 0x0201, [IntPtr]1, $lp, [N]::SMTO_ABORTIFHUNG, 2000, [ref]$r1)
   Start-Sleep -Milliseconds 30
   $s2 = [N]::SendMessageTimeout($deepest, 0x0202, [IntPtr]0, $lp, [N]::SMTO_ABORTIFHUNG, 2000, [ref]$r2)

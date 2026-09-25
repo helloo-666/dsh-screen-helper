@@ -1,5 +1,13 @@
 ﻿# Changelog
 
+## 0.1.48
+
+- **Agent-facing panel session actions**: panel.begin --title T,
+  panel.step --text S, panel.finish --summary S — the agent now drives the
+  Codex-style task panel explicitly across multi-step operations. Steps render
+  as a ✓/● list in the panel; finish shows the summary card. Auto-mode
+  (implicit panel on every background mutate) remains as the default path;
+  explicit actions win when both are used.
 ## 0.1.47
 
 - README: dsbox engine section — capability table, delivery channels, visual

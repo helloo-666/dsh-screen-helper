@@ -1,4 +1,4 @@
-/**
+﻿/**
  * dsh-screen-helper — a DeepSeek Harness bundle that drives the
  * ScreenAutomationHelper CLI (屏幕自动化小助手) from the model.
  *
@@ -137,6 +137,9 @@ const ACTIONS: Record<RiskTier, readonly string[]> = {
     'locator.wait',
     'task.status',
     'probe',
+    'panel.begin',
+    'panel.step',
+    'panel.finish',
   ],
   observe: [
     'screen.capture',
@@ -1772,6 +1775,87 @@ async function dispatch(params: {
   }
   const effConfig: Config = { ...config, inputMode: mode }
 
+  if (action === 'panel.begin' || action === 'panel.step' || action === 'panel.finish') {
+    const flag = (n: string): string | undefined => {
+      const i = restArgv.indexOf(n)
+      return i >= 0 && i + 1 < restArgv.length ? restArgv[i + 1] : undefined
+    }
+    const title = flag('--title') ?? 'AI 任务'
+    const stepText = flag('--text') ?? flag('--step') ?? ''
+    const summary = flag('--summary') ?? ''
+    if (!panelState.active && action !== 'panel.finish') {
+      await runCli({
+        cliPath: resolveDsboxPath() ?? cliPath,
+        invocation: { path: ['panel', 'start'], args: ['--title', title] },
+        timeoutMs: 15_000,
+        signal: exec.signal,
+      })
+      panelState.active = true
+      panelState.done = 0
+      panelState.steps = []
+    }
+    if (action === 'panel.finish') {
+      const finSummary = summary || panelState.steps.slice(-5).join('，')
+      await runCli({
+        cliPath: resolveDsboxPath() ?? cliPath,
+        invocation: {
+          path: ['panel', 'stop'],
+          args: finSummary ? ['--summary', finSummary] : [],
+        },
+        timeoutMs: 15_000,
+        signal: exec.signal,
+      })
+      panelState.active = false
+      panelState.done = 0
+      panelState.steps = []
+      return {
+        action, tier, executed: true, blockedReason: null, exitCode: 0,
+        data: { panel: 'finished', summary: finSummary } as unknown as JsonValue,
+        text: null, stderr: null,
+      }
+    }
+    panelState.done += 1
+    panelState.steps.push(stepText)
+    const history = panelState.steps.map((s, i) => ({
+      text: s,
+      state: i === panelState.steps.length - 1 ? 'active' : 'done',
+    }))
+    await runCli({
+      cliPath: resolveDsboxPath() ?? cliPath,
+      invocation: {
+        path: ['panel', 'update'],
+        args: [
+          '--step', stepText,
+          '--done', String(panelState.done),
+          '--total', String(panelState.done + 1),
+          '--history', JSON.stringify(history),
+        ],
+      },
+      timeoutMs: 15_000,
+      signal: exec.signal,
+    })
+    if (panelState.stopTimer) clearTimeout(panelState.stopTimer)
+    panelState.stopTimer = setTimeout(() => {
+      const finSummary = panelState.steps.slice(-5).join('，')
+      void runCli({
+        cliPath: resolveDsboxPath() ?? 'dsbox.cmd',
+        invocation: {
+          path: ['panel', 'stop'],
+          args: finSummary ? ['--summary', finSummary] : [],
+        },
+        timeoutMs: 15_000,
+      }).then(() => {
+        panelState.active = false
+        panelState.done = 0
+        panelState.steps = []
+      })
+    }, 120_000)
+    return {
+      action, tier, executed: true, blockedReason: null, exitCode: 0,
+      data: { panel: 'updated', step: stepText, done: panelState.done } as unknown as JsonValue,
+      text: null, stderr: null,
+    }
+  }
   if (action === 'find_exact') {
     return runFindExact({ cliPath, argv: restArgv, config: effConfig, tier, exec, action })
   }
