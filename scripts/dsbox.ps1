@@ -755,7 +755,66 @@ switch ($rest[0]) {
         }
       }
     } elseif ($rest.Count -ge 2 -and $rest[1] -eq 'tree') {
-      Fail 'dsbox ui tree is not implemented; use ui find' 2
+      # Export the window's accessibility subtree so a caller can SEE the UI
+      # structure: role/name per element plus which patterns it supports
+      # (Invoke = clickable, Value = typable, Scroll = scrollable).
+      $hwnd3 = 0L; $title3 = ''; $maxDepth = 6; $maxNodes = 300
+      for ($i = 2; $i -lt $rest.Count; $i++) {
+        if ($rest[$i] -eq '--hwnd' -and $i+1 -lt $rest.Count) { $hwnd3 = [long]$rest[$i+1]; $i++ }
+        elseif ($rest[$i] -eq '--title' -and $i+1 -lt $rest.Count) { $title3 = $rest[$i+1]; $i++ }
+        elseif ($rest[$i] -eq '--depth' -and $i+1 -lt $rest.Count) { $maxDepth = [int]$rest[$i+1]; $i++ }
+        elseif ($rest[$i] -eq '--max' -and $i+1 -lt $rest.Count) { $maxNodes = [int]$rest[$i+1]; $i++ }
+      }
+      if ($hwnd3 -le 0 -and -not $title3) { Fail 'usage: dsbox ui tree --hwnd H | --title T [--depth N] [--max N]' 2 }
+      Add-Type -AssemblyName UIAutomationClient
+      Add-Type -AssemblyName UIAutomationTypes
+      $t3 = Resolve-TargetWindow $title3 $hwnd3
+      $rootEl3 = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$t3.handle)
+      $script:dsbItems = New-Object System.Collections.ArrayList
+      $script:dsbCount = 0
+      function Add-UiNode($e, $d) {
+        if ($script:dsbCount -ge $maxNodes) { return }
+        $cur = $e.Current
+        $patterns = @()
+        foreach ($pi in @(@('Invoke', [System.Windows.Automation.InvokePattern]::Pattern), @('Value', [System.Windows.Automation.ValuePattern]::Pattern), @('Scroll', [System.Windows.Automation.ScrollPattern]::Pattern), @('Toggle', [System.Windows.Automation.TogglePattern]::Pattern), @('SelectionItem', [System.Windows.Automation.SelectionItemPattern]::Pattern), @('ExpandCollapse', [System.Windows.Automation.ExpandCollapsePattern]::Pattern))) {
+          try { [void]$e.GetCurrentPattern($pi[1]); $patterns += $pi[0] } catch { }
+        }
+        $r3 = $cur.BoundingRectangle
+        # off-screen / virtualised elements report infinite coordinates; clamp
+        # to 0 so [int] conversion cannot overflow (those boxes are meaningless
+        # anyway until the element is scrolled into view)
+        $x3 = if ([double]::IsInfinity($r3.X) -or [double]::IsNaN($r3.X)) { 0 } else { $r3.X }
+        $y3 = if ([double]::IsInfinity($r3.Y) -or [double]::IsNaN($r3.Y)) { 0 } else { $r3.Y }
+        $w3 = if ([double]::IsInfinity($r3.Width) -or [double]::IsNaN($r3.Width) -or $r3.Width -lt 0) { 0 } else { $r3.Width }
+        $h3 = if ([double]::IsInfinity($r3.Height) -or [double]::IsNaN($r3.Height) -or $r3.Height -lt 0) { 0 } else { $r3.Height }
+        [void]$script:dsbItems.Add([PSCustomObject]@{
+          depth = $d
+          name = $cur.Name
+          role = $cur.ControlType.ProgrammaticName -replace '^ControlType\.'
+          cls = $cur.ClassName
+          patterns = @($patterns)
+          box = @([int]$x3, [int]$y3, [int]($x3+$w3), [int]($y3+$h3))
+        })
+        $script:dsbCount++
+      }
+      function Walk-UiTree($e, $d) {
+        if ($d -gt $maxDepth -or $script:dsbCount -ge $maxNodes) { return }
+        $kids = $e.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+        foreach ($k in $kids) {
+          Add-UiNode $k $d
+          Walk-UiTree $k ($d + 1)
+        }
+      }
+      Add-UiNode $rootEl3 0
+      Walk-UiTree $rootEl3 1
+      Write-JsonOut @{
+        ok = $true
+        action = 'ui.tree'
+        hwnd = $t3.handle
+        count = $script:dsbCount
+        truncated = $(if ($script:dsbCount -ge $maxNodes) { $true } else { $false })
+        items = @($script:dsbItems)
+      }
     } elseif ($rest.Count -ge 2 -and $rest[1] -eq 'invoke') {
       $name2 = ''; $hwnd2 = 0L; $title2 = ''
       for ($i = 2; $i -lt $rest.Count; $i++) {

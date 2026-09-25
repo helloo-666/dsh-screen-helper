@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.32
+
+- **dsbox `ui tree`: export the accessibility subtree so an agent can SEE the
+  UI structure.** Per element: depth, name, role, class, capability patterns
+  (`Invoke` = clickable, `Value` = typable, `Scroll`/`Toggle`/`SelectionItem`/
+  `ExpandCollapse`), and box. Flags: `--depth` (default 6), `--max` nodes
+  (default 300), explicit `--hwnd`/`--title` required. Combined with
+  `ui find` (locate) + `ui invoke` (act) + `ui inspect` (verify), an agent can
+  now understand AND drive an interface entirely through the accessibility
+  channel.
+- Fixed: off-screen/virtualised elements report infinite bounding-rectangle
+  coordinates, which crashed the tree export with an Int32 overflow — now
+  clamped to 0.
+
 ## 0.1.31
 
 - **mouse.scroll background mode now auto-routes through UIA ScrollPattern**:
