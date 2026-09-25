@@ -6,6 +6,30 @@ model one tool — `screen_automation` — for driving the
 recognition, on-screen text/image location, UI element tree reading, and mouse / keyboard /
 clipboard input.
 
+## dsbox — the built-in fast engine (default since 0.1.42)
+
+This plugin ships **dsbox**, a from-scratch companion CLI built entirely on Windows' own
+WinRT OCR, GDI+, and UI Automation — no external dependencies, no Python, no SAH required.
+
+| Operation | How it works | Speed | Touches your mouse/keyboard? |
+|-----------|--------------|-------|------------------------------|
+| Click a button | UIA InvokePattern — the app clicks itself | ~2.9s | **Never** |
+| Type text | UIA ValuePattern — the app fills its own field | ~1.3s | **Never** |
+| Scroll | UIA ScrollPattern — the app scrolls itself | ~2.2s | **Never** |
+| Read the screen | WinRT OCR / UIA tree | 0.2–1.9s | **Never** |
+| Click at coordinates | Background window messages (fallback) | ~1.9s | **Never** |
+| Last resort | Real input mode | varies | Yes — always announced |
+
+**Visual feedback on every operation** (Codex-style): an orange AI pointer glides to the
+target with a click ripple, a cyan frame marks the element being acted on, a status badge
+announces the current step, typing shows per-character pulses, and a task panel tracks
+progress. If an app steals your foreground in response, the plugin automatically hands it
+back to you.
+
+Set `cliPath` to `G:\dsbox\dsbox.cmd` (or just keep the bundled copy — it is used
+automatically). The legacy ScreenAutomationHelper CLI remains fully supported as a
+fallback engine.
+
 > **Read the [Security](#security) section before installing.** This plugin lets an AI model
 > move your real mouse, type on your real keyboard, and read your screen and clipboard.
 
