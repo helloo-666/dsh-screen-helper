@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.28
+
+- **"AI 自己的键盘"：dsbox `keyboard setvalue`** — puts text straight into an
+  element's value via UIA ValuePattern (the app's own accessibility channel).
+  No keystrokes, no cursor, no focus change, and it works where WM_CHAR is
+  ignored. Verified live against the Settings app search box (write "蓝牙" →
+  read back → clear). Supports `--name` element matching, scoped by
+  `--hwnd`/`--title`.
+- **Fixed: the structural pre-probe was silently dead.** `runBackgroundInput`
+  mapped the `probe` action to null, so `ui.click`'s no-child-windows caveat
+  (and its whole structProbe path) never ran with dsbox present. Probe now
+  routes to `dsbox probe` and returns real child/UIA counts — the
+  `backgroundCapable` diagnosis finally reaches callers.
+
 ## 0.1.27
 
 - **"AI 自己的鼠标"来了：UIA InvokePattern delivery.** New `dsbox ui invoke

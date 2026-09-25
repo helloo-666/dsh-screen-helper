@@ -5,7 +5,7 @@
 
 ---
 
-## 2026-09-25 下午（第 25 轮工作）
+## 2026-09-25 下午（第 25 轮工作）✅ 已完成
 
 ### 你刚提的要求与决定
 
@@ -20,26 +20,27 @@
 |------|---------|--------|
 | `G:\Temp\dsbox\dsbox.ps1` | 新增 `ui invoke --name N` 命令 | 核心新功能：元素级点击 |
 | 同上 | 修复 `ui find` 角色名正则（输出不再带 `ControlType.` 前缀） | 输出更干净 |
-| `G:\Temp\dsbox\dsbox.ps1` | 强制 stdout 用 UTF-8 + 文件加 BOM | 修中文乱码（Node 读 GBK 输出会变问号） |
+| 同上 | 强制 stdout 用 UTF-8 + 文件加 BOM | 修中文乱码（Node 读 GBK 输出会变问号） |
 | `src/index.ts`（插件） | `ui.click` 后台模式新增 fast path：定位到 UIA 元素后自动改走 `ui invoke` | 让插件自动享受"零光标点击" |
+
+### 最终测试结果（全部通过）
+
+- 单元测试 **45/45** ✅
+- 计算器数学题：「加→五→等于」→ 显示屏 **10** ✅，光标零移动
+- 插件端到端：`ui.click --name 七` → 自动走 `uia-invoke` → 显示屏 **7** ✅，耗时 **2.9 秒**
+- 计算器已关闭，无残留窗口
+
+### 发布状态
+
+- **v0.1.27 已发布**：[GitHub Release](https://github.com/helloo-666/dsh-screen-helper/releases/tag/v0.1.27)
+- 装机副本已同步（`C:\Users\Hello\.dsh\profiles\desktop\node_modules\dsh-screen-helper`，版本 0.1.27）
+- 重启 DSH 会话后 profile 配置生效
 
 ### 期间的失败与返工（如实记录）
 
 - 给 `dsbox.ps1` 插入 `ui invoke` 代码时，用"查找替换行号"的方式连续 3 次插错位置，造成 if/else 结构断裂（报 `elseif` 不是命令的错误），文件里一度出现 3 个重复的 `ui` 分支
 - 最终做法：删光所有残缺分支，整体重写一个干净的 `ui` 分支（find / inspect / invoke / tree 四个子命令），一次通过
 - **教训**：超过 20 行的结构改动不该用打补丁方式，应该直接重写整个函数/分支
-
-### 测试状态
-
-- `node --test`：45/45 通过（改动前基线，发布前会重跑）
-- 计算器实测：InvokePattern 三连击 → 显示 10 ✅
-- 计算器"加""五""等于"三个按钮的 `ui invoke` 均返回 `invoked` ✅
-
-### 下一步（明天继续）
-
-1. 把 `ui invoke` 的插件侧改动测完（上一步测试命令被中断，还没跑完）
-2. 发布 v0.1.27（版本号已在本地写好，未提交）
-3. 同步装机副本到 `C:\Users\Hello\.dsh\profiles\desktop\node_modules\`
 
 ---
 
@@ -80,4 +81,4 @@
 | 0.1.24 | dsbox 补齐鼠标滚动/键盘输入，插件自动路由 | ✅ 已发布 |
 | 0.1.25 | UIA 树 + probe 预检 + ui.click 走 UIA 精确坐标（6.1s→2.7s） | ✅ 已发布 |
 | 0.1.26 | 点位反查验证 + ClickablePoint + 中文乱码修复 | ✅ 已发布 |
-| 0.1.27 | UIA InvokePattern（"AI 自己的鼠标"，零光标点击） | 🔄 本轮开发中 |
+| 0.1.27 | UIA InvokePattern（"AI 自己的鼠标"，零光标点击） | ✅ 已发布 |

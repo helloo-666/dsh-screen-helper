@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 # dsbox - fast local screen automation CLI (zero dependencies)
 # WinRT OCR + GDI+ capture + Win32 messages, all built into Windows.
 # Output contract: exit 0 = success (stdout JSON); exit 2 = usage error; exit 1 = runtime error.
@@ -495,8 +495,60 @@ switch ($rest[0]) {
     else { Fail "unknown mouse subcommand '$($rest[1])'" 2 }
   }
   'keyboard' {
-    if ($rest.Count -lt 2 -or $rest[1] -ne 'write') { Fail 'usage: dsbox keyboard write --text T [--point x,y] --hwnd H | --title T' 2 }
-    Cmd-KeyboardWrite @($rest[2..($rest.Count-1)])
+    if ($rest.Count -ge 2 -and $rest[1] -eq 'setvalue') {
+      # UIA ValuePattern: put text straight into an element's value - the
+      # app's own accessibility channel, no keystrokes, no cursor, works on
+      # UWP/self-drawn apps that ignore WM_CHAR.
+      $text = $null; $hwnd2 = 0L; $title2 = ''; $name2 = ''
+      for ($i = 2; $i -lt $rest.Count; $i++) {
+        if ($rest[$i] -eq '--text' -and $i+1 -lt $rest.Count) { $text = $rest[$i+1]; $i++ }
+        elseif ($rest[$i] -eq '--name' -and $i+1 -lt $rest.Count) { $name2 = $rest[$i+1]; $i++ }
+        elseif ($rest[$i] -eq '--hwnd' -and $i+1 -lt $rest.Count) { $hwnd2 = [long]$rest[$i+1]; $i++ }
+        elseif ($rest[$i] -eq '--title' -and $i+1 -lt $rest.Count) { $title2 = $rest[$i+1]; $i++ }
+      }
+      if ($null -eq $text) { Fail 'usage: dsbox keyboard setvalue --text T --name N [--hwnd H | --title T]' 2 }
+      Add-Type -AssemblyName UIAutomationClient
+      Add-Type -AssemblyName UIAutomationTypes
+      $scopeEl = $null
+      if ($hwnd2 -gt 0 -or $title2) {
+        $t = Resolve-TargetWindow $title2 $hwnd2
+        $scopeEl = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$t.handle)
+      }
+      $editCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
+      $el = $null
+      if ($scopeEl -and $name2) {
+        $nc = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $name2)
+        $and = New-Object System.Windows.Automation.AndCondition($editCond, $nc)
+        $el = $scopeEl.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $and)
+      }
+      if (-not $el -and $scopeEl) { $el = $scopeEl.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCond) }
+      if (-not $el) {
+        Write-JsonOut @{ ok = $true; action = 'keyboard.setvalue'; status = 'not_found' }
+      }
+      $vp = $null
+      try {
+        $vp = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+        $vp.SetValue($text)
+      } catch {
+        Write-JsonOut @{ ok = $false; action = 'keyboard.setvalue'; status = 'no_value_pattern'; error = 'element does not support ValuePattern' }
+      }
+      Start-Sleep -Milliseconds 200
+      Write-JsonOut @{
+        ok = $true
+        action = 'keyboard.setvalue'
+        status = 'set'
+        element = [PSCustomObject]@{
+          name = $el.Current.Name
+          role = $el.Current.ControlType.ProgrammaticName -replace '^ControlType\.'
+        }
+        valueAfter = $vp.Current.Value
+        cursorMoved = $false
+      }
+    } elseif ($rest.Count -lt 2 -or $rest[1] -ne 'write') {
+      Fail 'usage: dsbox keyboard write --text T [--point x,y] --hwnd H | --title T | keyboard setvalue --text T --name N' 2
+    } else {
+      Cmd-KeyboardWrite @($rest[2..($rest.Count-1)])
+    }
   }
   'find_exact' {
     # Plugin compatibility: find_exact --text Q [--target T] = OCR + rank.

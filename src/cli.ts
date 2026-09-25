@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ScreenAutomationHelper CLI invocation core.
  *
  * Responsibilities, in order of importance:
@@ -536,11 +536,14 @@ async function runBackgroundInputViaDsbox(
     case 'click': sub.push('mouse', 'click'); break
     case 'scroll': sub.push('mouse', 'scroll'); break
     case 'type': sub.push('keyboard', 'write'); break
+    case 'probe': sub.push('probe'); break
     case 'key':
-    case 'probe':
-      // dsbox does not implement key/probe yet; let the caller fall back.
+      // dsbox does not implement single-key delivery yet; fall back.
       return null
   }
+  // Probe action: dsbox HAS a probe command — expose it as its own case.
+  // (handled below via 'probe' keyword: kept null here because callers expect
+  //  probe to run against an existing hwnd with different argv shape)
   const argv = [...sub]
   if (params.x !== undefined && params.y !== undefined) argv.push('--point', `${params.x},${params.y}`)
   if (params.text !== undefined) argv.push('--text', params.text)
