@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.19
+
+- **New opt-in `autoFallback` config.** When the target window cannot receive
+  background input at all (no child HWNDs — self-drawn UI), `ui.click` now retries
+  once with the real cursor and reports `autoFallbackUsed` plus `fallbackReason`,
+  instead of returning a delivery that will be silently ignored. **Off by
+  default**: moving the user's mouse is exactly what background mode promises not
+  to do, so this must be an explicit choice. Without it, the existing
+  `noChildWindows` + `structuralCaveat` warning (naming `--input-mode real`) is
+  still returned.
+
 ## 0.1.18
 
 - **Background input no longer blocks forever on a hung window.** Click/type/key

@@ -83,6 +83,7 @@ export interface Config {
   approval: ApprovalMode
   confirm: ConfirmMode
   inputMode: InputMode
+  autoFallback: boolean
   blockDestructive: boolean
 }
 
@@ -94,6 +95,12 @@ export const Config: z<Config> = z.object({
     .default('never'),
   confirm: z.union([z.const('popup'), z.const('off')]).default('popup'),
   inputMode: z.union([z.const('background'), z.const('real')]).default('background'),
+  // When true and the target window cannot receive background input at all (no
+  // child HWNDs — self-drawn UI), retry once with the real cursor instead of
+  // returning a click that will be ignored. Off by default: moving the user's
+  // mouse is exactly what background mode promises not to do, so it must be an
+  // explicit choice.
+  autoFallback: z.boolean().default(false),
   blockDestructive: z.boolean().default(false),
 })
 
@@ -890,17 +897,51 @@ async function runUiClick(params: {
             timeoutMs: params.config.timeoutMs,
           })
         : null
-    const structNote: Record<string, unknown> =
-      structProbe !== null && structProbe.childCount === 0
-        ? {
-            noChildWindows: true,
-            structuralCaveat:
-              'This window exposes no child HWNDs, so the click could only be sent to its ' +
-              'top-level window; self-drawn apps usually ignore that, so it may have had no ' +
-              'effect. To drive this window, retry the same call with --input-mode real ' +
-              '(which moves the physical cursor), or run `probe --hwnd <handle>` first.',
-          }
-        : {}
+    const noChildWindows = structProbe !== null && structProbe.childCount === 0
+    const structNote: Record<string, unknown> = noChildWindows
+      ? {
+          noChildWindows: true,
+          structuralCaveat:
+            'This window exposes no child HWNDs, so the click could only be sent to its ' +
+            'top-level window; self-drawn apps usually ignore that, so it may have had no ' +
+            'effect. To drive this window, retry the same call with --input-mode real ' +
+            '(which moves the physical cursor), or run `probe --hwnd <handle>` first.',
+        }
+      : {}
+
+    // Opt-in rescue: the background click above was delivered but will almost
+    // certainly be ignored. Retry once with the real cursor so the call actually
+    // does something — but only when autoFallback is on, because moving the
+    // user's mouse without being asked is what background mode exists to avoid.
+    const clickArgsBg = clickArgs
+    if (noChildWindows && params.config.autoFallback) {
+      const realClick = await runCli({
+        cliPath: params.cliPath,
+        invocation: { path: ['mouse', 'click'], args: clickArgsBg },
+        timeoutMs: params.config.timeoutMs,
+        signal: params.exec.signal,
+      })
+      return {
+        action: params.action, tier: params.tier, executed: true,
+        blockedReason: null, exitCode: realClick.ok ? 0 : realClick.exitCode,
+        data: {
+          step: 'clicked',
+          ...baseBg,
+          inputMode: 'real',
+          autoFallbackUsed: true,
+          fallbackReason:
+            'background delivery cannot work here (no child HWNDs) and autoFallback is ' +
+            'enabled, so the click was repeated with the physical cursor. The cursor moved.',
+          ...structNote,
+          ...(realClick.ok && realClick.json !== null && typeof realClick.json === 'object'
+            ? realClick.json
+            : {}),
+          ...verify,
+        } as unknown as JsonValue,
+        text: realClick.ok ? null : realClick.message,
+        stderr: realClick.ok ? null : realClick.stderr,
+      }
+    }
 
     return {
       action: params.action, tier: params.tier, executed: true,

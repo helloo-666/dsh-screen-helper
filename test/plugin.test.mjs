@@ -555,3 +555,20 @@ test('render produces a readable block for both outcomes', () => {
   assert.match(ok[0].text, /JSON/);
   assert.match(ok[0].text, /finished/);
 });
+
+test('autoFallback is opt-in and off by default', async () => {
+  // Moving the user's mouse is what background mode promises not to do, so the
+  // self-drawn-window rescue must never fire unless explicitly configured.
+  const { ctx, registered } = makeContext();
+  ctx.approval = { async request() { return 'allowed-once'; } };
+  apply(ctx, Config({ inputMode: 'background', confirm: 'off', approval: 'never', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+  const exec = { signal: new AbortController().signal, agent: undefined, callId: 'fallback-off' };
+  const v = await tool.execute(
+    { action: 'mouse.click', args: ['--point', '300,900', '--hwnd', '66024'] },
+    exec,
+  );
+  // Background routing ran; no autoFallbackUsed marker anywhere.
+  assert.equal(v.data.inputMode, 'background');
+  assert.equal(v.data.autoFallbackUsed, undefined);
+});
