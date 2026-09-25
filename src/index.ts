@@ -625,6 +625,26 @@ async function runUiClick(params: {
   // --hwnd/--title: SAH's ui.find rejects them outright, but dsbox's
   // implementation scopes the UIA scan to that window's subtree —far fewer
   // false matches from unrelated apps— so they are kept when dsbox is present.
+  // Step 0: refuse stale targets — if the caller gave a --hwnd/--title that no
+  // longer exists (window closed since), fail immediately instead of
+  // silently operating on nothing.
+  const preHwnd = numericFlag(argv, '--hwnd')
+  const preTitle = flagValue(argv, '--title')
+  if (preHwnd !== undefined || preTitle !== undefined) {
+    const liveness = await ensureWindowAlive(preHwnd, preTitle, params.cliPath, params.config.timeoutMs, params.exec.signal)
+    if (!liveness.alive) {
+      return {
+        action: params.action,
+        tier: params.tier,
+        executed: false,
+        blockedReason: liveness.error ?? 'target window no longer exists',
+        exitCode: null,
+        data: null,
+        text: null,
+        stderr: null,
+      }
+    }
+  }
   const dsboxActive = resolveDsboxPath() !== null
   const uiFindArgs: string[] = []
   {
@@ -1577,6 +1597,25 @@ async function runBackground(params: {
     // not_found / no_value_pattern → fall through to WM_CHAR typing
   }
 
+  // Refuse stale handles: verify the target window still exists before
+  // delivering anything.
+  const bgHwnd = p.hwnd
+  const bgTitle = p.title
+  if (bgHwnd !== undefined || bgTitle !== undefined) {
+    const liveness = await ensureWindowAlive(bgHwnd, bgTitle, resolveDsboxPath() ?? 'dsbox.cmd', params.config.timeoutMs, params.exec.signal)
+    if (!liveness.alive) {
+      return {
+        action: params.action,
+        tier: params.tier,
+        executed: false,
+        blockedReason: liveness.error ?? 'target window no longer exists',
+        exitCode: null,
+        data: null,
+        text: null,
+        stderr: null,
+      }
+    }
+  }
   const out = await runBackgroundInput({
     action: p.kind,
     ...(p.kind === 'click' || p.kind === 'scroll' ? { x: p.x, y: p.y } : {}),
@@ -1727,6 +1766,36 @@ function panelDescribe(action: string, argv: readonly string[]): string {
   if (action === 'mouse.click') return `点击 (${point ?? '?'})`
   if (action === 'mouse.scroll') return `滚动 ${flag('--amount') ?? ''}`
   return action
+}
+// ---- Window liveness check: refuse to operate on stale handles ----
+async function ensureWindowAlive(
+  hwnd: number | undefined,
+  title: string | undefined,
+  cliPath: string,
+  timeoutMs: number,
+  signal: AbortSignal,
+): Promise<{ alive: boolean; error?: string }> {
+  if (hwnd === undefined && title === undefined) return { alive: true }
+  const w = await runCli({
+    cliPath,
+    invocation: {
+      path: ['window', 'list-visible'],
+      args: hwnd !== undefined ? ['--hwnd', String(hwnd)] : title !== undefined ? ['--title', title] : [],
+    },
+    timeoutMs,
+    signal,
+  })
+  if (!w.ok) return { alive: false, error: w.message ?? 'window query failed' }
+  const windows = (w.json as { windows?: Array<{ handle?: number; title?: string }> } | undefined)?.windows ?? []
+  if (hwnd !== undefined) {
+    const found = windows.some((win) => win.handle === hwnd)
+    return found ? { alive: true } : { alive: false, error: `window handle ${hwnd} no longer exists (was it closed?)` }
+  }
+  if (title !== undefined) {
+    const found = windows.some((win) => win.title?.includes(title))
+    return found ? { alive: true } : { alive: false, error: `no visible window matching "${title}"` }
+  }
+  return { alive: true }
 }
 async function panelTouch(action: string, argv: readonly string[]): Promise<void> {
   const step = panelDescribe(action, argv)
