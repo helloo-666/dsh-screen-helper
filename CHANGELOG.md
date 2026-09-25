@@ -1,4 +1,15 @@
-﻿# Changelog
+# Changelog
+
+## 0.1.40
+
+- **Status badge**: a dark pill at the top centre of the screen announces what
+  the AI is doing in real time — "AI 正在点击「返回」" for clicks, "AI 正在输入（N 字符）" for
+  typing — before the pointer glides in.
+- **Scroll cue**: `mouse scrolluia` now pulses a direction chevron at the
+  centre of the scrolling pane while it scrolls (two pulses, then the scroll
+  lands).
+- Demo verified on the Settings app: badge + pointer + invoke, scroll cue at
+  0→50%, typing pulses — all restored afterwards.
 
 ## 0.1.39
 

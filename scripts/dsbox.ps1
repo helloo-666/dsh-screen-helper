@@ -294,6 +294,87 @@ function Show-WindowFrame([long]$Hwnd, [int[]]$Rect, [int]$Ms = 1600) {
   }
 }
 
+function Show-ScrollCue([int]$Cx, [int]$Cy, [int]$Amount) {
+  # direction arrows pulsing at the scroll target while scrolluia runs:
+  # up/down chevron flips by amount sign, pulses twice, fades.
+  $ov = [IntPtr]::Zero
+  try {
+    Add-Type -AssemblyName System.Drawing
+    $w = 44; $h = 44
+    $ex = [uint32]0x00080000 -bor [uint32]0x00000020 -bor [uint32]0x00000080 -bor [uint32]0x08000000
+    $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-scroll', [uint32]'0x90000000', $Cx - 22, $Cy - 22, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
+    if ($ov -eq [IntPtr]::Zero) { return }
+    [void][N]::SetWindowLongW($ov, -20, [int]$ex)
+    $bmp = New-Object System.Drawing.Bitmap($w, $h)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(240, 255, 140, 0), 4)
+    $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::ArrowAnchor
+    $down = $Amount -ge 0
+    for ($pulse = 0; $pulse -lt 2; $pulse++) {
+      $g.Clear([System.Drawing.Color]::Transparent)
+      if ($down) {
+        $g.DrawLine($pen, 22, 10, 22, 32)
+      } else {
+        $g.DrawLine($pen, 22, 32, 22, 10)
+      }
+      $hdc = [N]::GetDC($ov); $gdc = [System.Drawing.Graphics]::FromHdc($hdc); $gdc.DrawImage($bmp, 0, 0); $gdc.Dispose()
+      [void][N]::ReleaseDC($ov, $hdc)
+      Start-Sleep -Milliseconds 180
+      $g.Clear([System.Drawing.Color]::Transparent)
+      $hdc = [N]::GetDC($ov); $gdc = [System.Drawing.Graphics]::FromHdc($hdc); $gdc.DrawImage($bmp, 0, 0); $gdc.Dispose()
+      [void][N]::ReleaseDC($ov, $hdc)
+      Start-Sleep -Milliseconds 120
+    }
+    $pen.Dispose(); $bmp.Dispose()
+  } catch { }
+  finally {
+    if ($ov -ne [IntPtr]::Zero) { [void][N]::DestroyWindow($ov) }
+  }
+}
+
+function Show-StatusBadge([string]$Text, [int]$Ms = 900) {
+  # small dark pill at the top centre of the primary screen: what the AI is
+  # doing right now (e.g. "AI clicking [返回]"). Fades after $Ms.
+  $ov = [IntPtr]::Zero
+  try {
+    Add-Type -AssemblyName System.Drawing
+    Add-Type -AssemblyName System.Windows.Forms
+    $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10, [System.Drawing.FontStyle]::Bold)
+    $sizeG = [System.Drawing.Graphics]::FromImage((New-Object System.Drawing.Bitmap(10, 10)))
+    $ts = $sizeG.MeasureString($Text, $font)
+    $sizeG.Dispose()
+    $w = [int]($ts.Width + 28); $h = [int]($ts.Height + 14)
+    $x = [int](($wa.Width - $w) / 2); $y = $wa.Y + 8
+    $ex = [uint32]0x00080000 -bor [uint32]0x00000020 -bor [uint32]0x00000080 -bor [uint32]0x08000000
+    $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-status', [uint32]'0x90000000', $x, $y, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
+    if ($ov -eq [IntPtr]::Zero) { return }
+    [void][N]::SetWindowLongW($ov, -20, [int]$ex)
+    $bmp = New-Object System.Drawing.Bitmap($w, $h)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $bg = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(225, 20, 20, 24))
+    $ft = New-Object System.Drawing.Font('Microsoft YaHei UI', 10, [System.Drawing.FontStyle]::Bold)
+    $fc = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 255, 170, 40))
+    $g.FillRectangle($bg, 0, 0, $w, $h)
+    $g.DrawString($Text, $ft, $fc, 14, 6)
+    $g.Dispose()
+    $hdc = [N]::GetDC($ov); $gdc = [System.Drawing.Graphics]::FromHdc($hdc); $gdc.DrawImage($bmp, 0, 0); $gdc.Dispose()
+    [void][N]::ReleaseDC($ov, $hdc); $bmp.Dispose()
+    [void][N]::SetLayeredWindowAttributes($ov, 0, 235, 0x2)
+    Start-Sleep -Milliseconds $Ms
+    for ($s = 4; $s -ge 1; $s--) {
+      $alpha = [byte][Math]::Max(10, [int](235 * $s / 4))
+      [void][N]::SetLayeredWindowAttributes($ov, 0, $alpha, 0x2)
+      Start-Sleep -Milliseconds 50
+    }
+  } catch { }
+  finally {
+    if ($ov -ne [IntPtr]::Zero) { [void][N]::DestroyWindow($ov) }
+  }
+}
+
 function Get-LastCursorPos {
   # remember the AI pointer's last resting place across invocations
   $p = Join-Path $env:TEMP 'dsbox-cursor.json'
@@ -596,6 +677,10 @@ function Cmd-MouseScrollUia($argv) {
   if (-not $best) {
     Write-JsonOut @{ ok = $true; action = 'mouse.scrolluia'; status = 'not_scrollable'; error = 'no vertically scrollable element in the target window' }
   }
+  $bestBox = $bestEl.Current.BoundingRectangle
+  $cueX = [int]([Math]::Max($bestBox.X, 0) + [Math]::Max($bestBox.Width, 0) / 2)
+  $cueY = [int]([Math]::Max($bestBox.Y, 0) + [Math]::Max($bestBox.Height, 0) / 2)
+  Show-ScrollCue $cueX $cueY $(if ($null -ne $percent) { 1 } else { $amount })
   $before = $best.Current.VerticalScrollPercent
   if ($null -ne $percent) {
     $best.SetScrollPercent([System.Windows.Automation.ScrollPattern]::NoScroll, [double]$percent)
@@ -751,6 +836,7 @@ switch ($rest[0]) {
       $lastPos2 = Get-LastCursorPos
       $fx2 = if ($lastPos2) { [int]$lastPos2.x } else { -1 }
       $fy2 = if ($lastPos2) { [int]$lastPos2.y } else { -1 }
+      Show-StatusBadge "AI 正在输入（$($text.Length) 字符）" 900
       Show-AiCursorAnimated $ebCx $ebCy $fx2 $fy2 700 $true
       Set-LastCursorPos $ebCx $ebCy
       # keystroke pulses: show up to 12 characters ticking above the field
@@ -1027,6 +1113,7 @@ switch ($rest[0]) {
       $lastPos3 = Get-LastCursorPos
       $fx3 = if ($lastPos3) { [int]$lastPos3.x } else { -1 }
       $fy3 = if ($lastPos3) { [int]$lastPos3.y } else { -1 }
+      Show-StatusBadge "AI 正在点击「$name」" 900
       Show-AiCursorAnimated $rCx $rCy $fx3 $fy3 700 $true
       Set-LastCursorPos $rCx $rCy
       Save-Foreground
