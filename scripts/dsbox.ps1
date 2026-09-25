@@ -293,6 +293,51 @@ function Show-WindowFrame([long]$Hwnd, [int[]]$Rect, [int]$Ms = 1600) {
   }
 }
 
+function Show-AiCursor([int[]]$Point, [int]$Ms = 900) {
+  # The AI's own pointer: a translucent orange arrow drawn at the operation
+  # point on a click-through topmost layered window. The physical cursor never
+  # moves - this shows WHERE the AI is acting, answering "your cursor?".
+  $ov = [IntPtr]::Zero
+  try {
+    Add-Type -AssemblyName System.Drawing
+    $size = 28
+    $x = $Point[0] - 2; $y = $Point[1] - 2
+    $w = $size + 8; $h = $size + 8
+    if ($w -le 0 -or $h -le 0) { return }
+    $ex = 0x00080000 -bor 0x00000020 -bor 0x00000080 -bor 0x08000000
+    $ov = [N]::CreateWindowExW([uint32]$ex, 'Static', 'dsbox-aicursor', [uint32]0x90000000, $x, $y, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
+    if ($ov -eq [IntPtr]::Zero) { return }
+    [void][N]::SetWindowLongW($ov, -20, [int]$ex)
+    $bmp = New-Object System.Drawing.Bitmap($w, $h)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    # arrow cursor shape, orange with dark outline
+    $pts = @( (New-Object System.Drawing.Point(4,2)), (New-Object System.Drawing.Point(4,22)), (New-Object System.Drawing.Point(9,17)), (New-Object System.Drawing.Point(13,26)), (New-Object System.Drawing.Point(16,25)), (New-Object System.Drawing.Point(12,16)), (New-Object System.Drawing.Point(19,16)) )
+    $fill = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(235,255,140,0))
+    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(255,40,20,0), 2)
+    $g.FillPolygon($fill, $pts)
+    $g.DrawPolygon($pen, $pts)
+    $g.Dispose()
+    $hdc = [N]::GetDC($ov)
+    $gdc = [System.Drawing.Graphics]::FromHdc($hdc)
+    $gdc.DrawImage($bmp, 0, 0)
+    $gdc.Dispose()
+    [void][N]::ReleaseDC($ov, $hdc)
+    $bmp.Dispose()
+    [void][N]::SetLayeredWindowAttributes($ov, 0, 235, 0x2)
+    Start-Sleep -Milliseconds $Ms
+    $steps = 4
+    for ($s = $steps; $s -ge 1; $s--) {
+      $alpha = [byte][Math]::Max(15, [int](235 * $s / $steps))
+      [void][N]::SetLayeredWindowAttributes($ov, 0, $alpha, 0x2)
+      Start-Sleep -Milliseconds 60
+    }
+  } catch { }
+  finally {
+    if ($ov -ne [IntPtr]::Zero) { [void][N]::DestroyWindow($ov) }
+  }
+}
+
 # ---------------------------------------------------------------- commands
 
 function Cmd-ScreenRecognize($argv) {
@@ -366,6 +411,7 @@ function Cmd-MouseClick($argv) {
   }
   Save-Foreground
   Show-WindowFrame $t.handle $t.rect 1600
+  Show-AiCursor @($point[0], $point[1]) 700
   $child = [IntPtr]$t.handle
   $wr = New-Object N+RECT
   [void][N]::GetWindowRect($child, [ref]$wr)
@@ -627,6 +673,7 @@ switch ($rest[0]) {
       $eb = $el.Current.BoundingRectangle
       # frame the input element itself so the user sees where text goes
       Show-WindowFrame 0 @([int]$eb.X, [int]$eb.Y, [int]($eb.X+$eb.Width), [int]($eb.Y+$eb.Height)) 900
+      Show-AiCursor @([int]($eb.X+$eb.Width/2), [int]($eb.Y+$eb.Height/2)) 700
       Save-Foreground
       try {
         $vp = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
@@ -891,6 +938,7 @@ switch ($rest[0]) {
       $r = $el.Current.BoundingRectangle
       # frame the ELEMENT itself (tighter and clearer than the whole window)
       Show-WindowFrame 0 @([int]$r.X, [int]$r.Y, [int]($r.X+$r.Width), [int]($r.Y+$r.Height)) 900
+      Show-AiCursor @([int]($r.X+$r.Width/2), [int]($r.Y+$r.Height/2)) 700
       Save-Foreground
       $invoked = $false; $method = ''
       try {

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.36
+
+- **"Your cursor?" — the AI's own pointer.** In answer to "你的光标呢": UIA
+  delivery never moves the physical cursor, so there was nothing to look at.
+  Now every dsbox delivery shows a **translucent orange AI arrow** at the
+  exact operation point (button centre for clicks, field centre for typing)
+  on a click-through topmost layer — the AI's cursor, visible but never
+  touching yours. Wired into `ui invoke`, `keyboard setvalue`, and
+  `mouse click`; 700 ms hold + fade.
+
 ## 0.1.35
 
 - **Cursor verified normal** after user report of "no cursor": GetCursorInfo
