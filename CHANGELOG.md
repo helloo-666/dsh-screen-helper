@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.26
+
+- **dsbox `ui inspect --point`**: which UIA element sits at a screen point —
+  name/role/class/box/hwnd in one call. This closes the click-verify loop in
+  background mode: the plugin now verifies a `--verify` click by reading the
+  element identity at the clicked point from the UIA tree (no cursor
+  movement), instead of the weaker "did the screen change" OCR-diff. The
+  result is a hard `verified: true/false` with the landed element's role and
+  name.
+- **ClickablePoint-aware targeting**: dsbox's `ui find` now prefers the
+  element's own clickable point over the bounding-rect centre. Title-bar
+  elements' centres often sit on overlapping caption buttons — the exact
+  failure the verify loop then (correctly) flags. Fixed by construction.
+- **Fixed: mojibake through the cmd.exe spawn chain.** powershell.exe emitted
+  stdout in the console code page (GBK on zh-CN), which Node decoded as UTF-8
+  and turned every non-ASCII element name into U+FFFD garbage — silently
+  breaking name-match verification. dsbox now forces UTF-8 stdout and ships
+  with a BOM so its own string literals parse correctly on PS 5.1.
+- ui.click real-mode `--verify` (ui.inspect) now also routes through dsbox.
+- Measured e2e with verify: **3.6s**, `verified: true`, cursor untouched.
+
 ## 0.1.25
 
 - **dsbox gains a real UIA tree** (`System.Windows.Automation`): `ui find` now

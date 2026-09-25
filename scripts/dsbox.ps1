@@ -5,6 +5,9 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+# Emit UTF-8 on stdout regardless of the console code page: callers (Node)
+# decode as UTF-8, while powershell.exe would otherwise emit GBK on a zh-CN box.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # ---------------------------------------------------------------- infra
 
@@ -576,12 +579,23 @@ switch ($rest[0]) {
         if ($el) {
           $r = $el.Current.BoundingRectangle
           if ($r.Width -gt 0 -and $r.Height -gt 0) {
+            # Prefer the element's own clickable point when it has one: for
+            # title-bar/window elements the bounding-rect centre can sit on an
+            # overlapping child (close/minimize buttons), which verify then
+            # correctly flags as a mismatch. ClickablePoint avoids that.
+            $cx = [int]($r.X+$r.Width/2); $cy = [int]($r.Y+$r.Height/2)
+            try {
+              $cp = $el.GetClickablePoint()
+              if ($cp.X -ge $r.X -and $cp.X -le ($r.X+$r.Width) -and $cp.Y -ge $r.Y -and $cp.Y -le ($r.Y+$r.Height)) {
+                $cx = [int]$cp.X; $cy = [int]$cp.Y
+              }
+            } catch { }
             [void]$found.Add([PSCustomObject]@{
               name = $el.Current.Name
               role = $el.Current.ControlType.ProgrammaticName -replace '^ControlType\.'
               cls = $el.Current.ClassName
               box = @([int]$r.X, [int]$r.Y, [int]($r.X+$r.Width), [int]($r.Y+$r.Height))
-              center = @([int]($r.X+$r.Width/2), [int]($r.Y+$r.Height/2))
+              center = @($cx, $cy)
             })
           }
         }
@@ -590,10 +604,48 @@ switch ($rest[0]) {
       if ($found.Count -gt 1) { $status = 'ambiguous' }
       elseif ($found.Count -eq 1) { $status = 'matched' }
       Write-JsonOut @{ ok = $true; status = $status; count = $found.Count; matches = @($found) }
+    } elseif ($rest.Count -ge 2 -and $rest[1] -eq 'inspect') {
+      # Point reverse-lookup: which UIA element sits at this screen point?
+      # Closes the verify loop: click, then inspect the point to confirm the
+      # landed element matches the expectation.
+      $px = $null; $py = $null; $target = 'virtual-screen'
+      for ($i = 2; $i -lt $rest.Count; $i++) {
+        if ($rest[$i] -eq '--point' -and $i+1 -lt $rest.Count) {
+          $p = ($rest[$i+1] -split ',' | ForEach-Object { [int]$_.Trim() })
+          if ($p.Count -ne 2) { Fail 'usage: --point x,y' 2 }
+          $px = $p[0]; $py = $p[1]; $i++
+        }
+        elseif ($rest[$i] -eq '--target' -and $i+1 -lt $rest.Count) { $target = $rest[$i+1]; $i++ }
+      }
+      if ($null -eq $px) { Fail 'usage: dsbox ui inspect --point x,y [--target T]' 2 }
+      Add-Type -AssemblyName UIAutomationClient
+      Add-Type -AssemblyName UIAutomationTypes
+      Add-Type -AssemblyName WindowsBase
+      $pt = New-Object System.Windows.Point($px, $py)
+      $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
+      if (-not $el -or $el -eq [System.Windows.Automation.AutomationElement]::RootElement) {
+        Write-JsonOut @{ ok = $true; action = 'ui.inspect'; element = $null }
+      }
+      $r = $el.Current.BoundingRectangle
+      $role = $el.Current.ControlType.ProgrammaticName -replace '^ControlType\.'
+      Write-JsonOut @{
+        ok = $true
+        action = 'ui.inspect'
+        target = $target
+        point = @($px, $py)
+        element = [PSCustomObject]@{
+          name = $el.Current.Name
+          role = $role
+          cls = $el.Current.ClassName
+          box = @([int]$r.X, [int]$r.Y, [int]($r.X+$r.Width), [int]($r.Y+$r.Height))
+          center = @([int]($r.X+$r.Width/2), [int]($r.Y+$r.Height/2))
+          hwnd = $el.Current.NativeWindowHandle
+        }
+      }
     } elseif ($rest.Count -ge 2 -and $rest[1] -eq 'tree') {
       Fail 'dsbox ui tree is not implemented; use ui find' 2
     } else {
-      Fail 'usage: dsbox ui find --name N [--role R]' 2
+      Fail 'usage: dsbox ui find --name N [--role R] | ui inspect --point x,y' 2
     }
   }
   'probe' {

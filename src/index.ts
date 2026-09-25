@@ -892,14 +892,38 @@ async function runUiClick(params: {
         text: null, stderr: null,
       }
     }
-    // `--verify` normally re-inspects the element under the REAL cursor, which
-    // background mode never moves —but ui.inspect --point is also unavailable
-    // here, so skipping outright would leave no signal at all. Instead verify by
-    // observation: OCR the same region again and report whether anything changed.
-    // That cannot prove the right control was hit, so it is labelled as such.
+    // `--verify` in background mode: when dsbox is present, ui.inspect --point
+    // reads the element identity at the clicked point from the UIA tree —no
+    // cursor movement involved. That is a direct role/name check, far stronger
+    // than the OCR-diff fallback (which only says "something changed").
     const verifyRequested = argv.includes('--verify')
     let verify: Record<string, unknown> = {}
-    if (verifyRequested) {
+    if (verifyRequested && dsboxActive) {
+      const inspect = await runCli({
+        cliPath: enginePath,
+        invocation: {
+          path: ['ui', 'inspect'],
+          args: ['--point', `${center[0]},${center[1]}`],
+        },
+        timeoutMs: params.config.timeoutMs,
+        signal: params.exec.signal,
+      })
+      const el = (inspect.ok ? (inspect.json as Record<string, unknown> | undefined)?.element : undefined) as
+        | { role?: string; name?: string }
+        | undefined
+      const landedRole = el?.role ?? ''
+      const landedName = el?.name ?? ''
+      const roleMatch = role ? landedRole.toLowerCase() === role.toLowerCase() : true
+      const nameMatch = name ? (landedName.includes(name) || name.includes(landedName)) : true
+      const verified = roleMatch && nameMatch && landedRole !== ''
+      verify = {
+        verifyMethod: 'uia-point',
+        verified,
+        landedRole,
+        landedName: landedName.slice(0, 80),
+        ...(!verified ? { verifyNote: 'the element now under the clicked point does not match the requested control; the UI may have changed under the click, or the control reports no accessible identity' } : {}),
+      }
+    } else if (verifyRequested) {
       const after = await runCli({
         cliPath: enginePath,
         invocation: { path: ['screen', 'recognize'], args: recArgs },
@@ -1048,7 +1072,7 @@ async function runUiClick(params: {
 
   const target_ = pickTarget(argv) ?? 'virtual-screen'
   const inspect = await runCli({
-    cliPath: params.cliPath,
+    cliPath: enginePath,
     invocation: {
       path: ['ui', 'inspect'],
       args: ['--target', target_, '--point', `${center[0]},${center[1]}`],
