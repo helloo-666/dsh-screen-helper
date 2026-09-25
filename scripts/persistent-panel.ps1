@@ -1,97 +1,138 @@
 ﻿param([string]$Title = 'AI 任务', [string]$StateFile = '')
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+
+# ---- 设计令牌：深色现代风（与 DSH 深色界面搭配）----
+$clrTop    = [System.Drawing.Color]::FromArgb(32, 34, 42)
+$clrBottom = [System.Drawing.Color]::FromArgb(24, 26, 32)
+$clrText   = [System.Drawing.Color]::FromArgb(245, 246, 250)
+$clrMuted  = [System.Drawing.Color]::FromArgb(158, 163, 178)
+$clrAccent = [System.Drawing.Color]::FromArgb(88, 150, 255)
+$clrAccent2= [System.Drawing.Color]::FromArgb(72, 214, 200)
+$clrOrange = [System.Drawing.Color]::FromArgb(255, 138, 48)
+$clrOrange2= [System.Drawing.Color]::FromArgb(255, 92, 32)
+$fUI       = 'Microsoft YaHei UI'
+
+$W = 420; $H = 104; $rad = 20
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'AI'
-$form.Size = New-Object System.Drawing.Size(380, 130)
+$form.Size = New-Object System.Drawing.Size($W, $H)
 $form.StartPosition = 'Manual'
-$form.Location = New-Object System.Drawing.Point(770, 8)
+$form.Location = New-Object System.Drawing.Point(750, 12)
 $form.TopMost = $true
 $form.FormBorderStyle = 'None'
-$form.BackColor = [System.Drawing.Color]::FromArgb(28, 28, 28)
+$form.BackColor = $clrBottom
 $form.ShowInTaskbar = $false
 
-$lblAI = New-Object System.Windows.Forms.Label
-$lblAI.Text = 'AI'
-$lblAI.ForeColor = [System.Drawing.Color]::FromArgb(255, 255, 170, 40)
-$lblAI.Font = New-Object System.Drawing.Font('Segoe UI', 11, [System.Drawing.FontStyle]::Bold)
-$lblAI.Location = New-Object System.Drawing.Point(18, 10)
-$lblAI.AutoSize = $true
-$form.Controls.Add($lblAI)
+# 圆角区域
+$region = New-Object System.Drawing.Drawing2D.GraphicsPath
+$region.AddArc(0, 0, $rad * 2, $rad * 2, 180, 90)
+$region.AddArc($W - $rad * 2, 0, $rad * 2, $rad * 2, 270, 90)
+$region.AddArc($W - $rad * 2, $H - $rad * 2, $rad * 2, $rad * 2, 0, 90)
+$region.AddArc(0, $H - $rad * 2, $rad * 2, $rad * 2, 90, 90)
+$region.CloseFigure()
+$form.Region = New-Object System.Drawing.Region($region)
 
-$lblTitle = New-Object System.Windows.Forms.Label
-$lblTitle.Text = $Title
-$lblTitle.ForeColor = [System.Drawing.Color]::White
-$lblTitle.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
-$lblTitle.Location = New-Object System.Drawing.Point(46, 11)
-$lblTitle.AutoSize = $true
-$form.Controls.Add($lblTitle)
+$script:progCur = 0.0
+$script:progTarget = 0.0
+$script:stepText = '准备中…'
+$script:pulse = 0.0
 
-$lblStep = New-Object System.Windows.Forms.Label
-$lblStep.Text = '待机中'
-$lblStep.ForeColor = [System.Drawing.Color]::FromArgb(255, 200, 200, 210)
-$lblStep.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
-$lblStep.Location = New-Object System.Drawing.Point(18, 48)
-$lblStep.AutoSize = $true
-$form.Controls.Add($lblStep)
-
-# 自绘平滑进度条：渐变蓝→青，带流动动画
-$script:progressPanel = New-Object System.Windows.Forms.Panel
-$script:progressPanel.Location = New-Object System.Drawing.Point(18, 92)
-$script:progressPanel.Size = New-Object System.Drawing.Size(344, 6)
-$script:progressTarget = 0.0   # 目标进度 0-1
-$script:progressCurrent = 0.0  # 当前显示进度
-$script:phase = 0.0            # 流动动画相位
-$script:progressPanel.Add_Paint({
-  param($p, $e)
+$form.Add_Paint({
+  param($s, $e)
   $g = $e.Graphics
   $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  $g.Clear($p.Parent.BackColor)
-  # 背景轨道
-  $trackBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 50, 50, 56))
-  $trackPath = New-Object System.Drawing.Drawing2D.GraphicsPath
-  $trackPath.AddArc(0, 0, 6, 6, 180, 90)
-  $trackPath.AddArc($p.Width - 6, 0, 6, 6, 270, 90)
-  $trackPath.AddArc($p.Width - 6, $p.Height - 6, 6, 6, 0, 90)
-  $trackPath.AddArc(0, $p.Height - 6, 6, 6, 90, 90)
-  $trackPath.CloseFigure()
-  $g.FillPath($trackBrush, $trackPath)
-  # 进度填充（渐变蓝→青）
-  $fillW = [int]([Math]::Max(0.0, [Math]::Min(1.0, $script:progressCurrent)) * $p.Width)
-  if ($fillW -gt 6) {
-    $fillPath = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $fillPath.AddArc(0, 0, 6, 6, 180, 90)
-    $fillPath.AddArc($fillW - 6, 0, 6, 6, 270, 90)
-    $fillPath.AddArc($fillW - 6, $p.Height - 6, 6, 6, 0, 90)
-    $fillPath.AddArc(0, $p.Height - 6, 6, 6, 90, 90)
-    $fillPath.CloseFigure()
-    $grad = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
-      (New-Object System.Drawing.Point(0, 0)),
-      (New-Object System.Drawing.Point($p.Width, 0)),
-      [System.Drawing.Color]::FromArgb(255, 0, 120, 255),
-      [System.Drawing.Color]::FromArgb(255, 0, 220, 255))
-    $g.FillPath($grad, $fillPath)
-    $grad.Dispose(); $fillPath.Dispose(); $trackBrush.Dispose(); $trackPath.Dispose()
+  $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+
+  # 卡片背景：垂直微渐变
+  $bgGrad = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
+    (New-Object System.Drawing.Point(0, 0)),
+    (New-Object System.Drawing.Point(0, $H)),
+    $clrTop, $clrBottom)
+  $g.FillPath($bgGrad, $region)
+  $bgGrad.Dispose()
+
+  # 微光内描边
+  $edge = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(34, 255, 255, 255), 1)
+  $g.DrawPath($edge, $region)
+  $edge.Dispose()
+
+  # 徽章胶囊（橙色渐变 + AI）
+  $bx = 18; $by = 17; $bw = 34; $bh = 20; $br = 9
+  $badge = New-Object System.Drawing.Drawing2D.GraphicsPath
+  $badge.AddArc($bx, $by, $br * 2, $br * 2, 90, 180)
+  $badge.AddArc($bx + $bw - $br * 2, $by, $br * 2, $br * 2, 270, 180)
+  $badge.CloseFigure()
+  $bGrad = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
+    (New-Object System.Drawing.Point($bx, $by)),
+    (New-Object System.Drawing.Point($bx + $bw, $by + $bh)),
+    $clrOrange, $clrOrange2)
+  $g.FillPath($bGrad, $badge)
+  $bGrad.Dispose(); $badge.Dispose()
+  $fBadge = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+  $wBadge = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+  $szB = $g.MeasureString('AI', $fBadge)
+  $g.DrawString('AI', $fBadge, $wBadge, $bx + ($bw - $szB.Width) / 2, $by + ($bh - $szB.Height) / 2 + 1)
+  $fBadge.Dispose(); $wBadge.Dispose()
+
+  # 标题（徽章右侧）
+  $fTitle = New-Object System.Drawing.Font($fUI, 11, [System.Drawing.FontStyle]::Bold)
+  $tBrush = New-Object System.Drawing.SolidBrush($clrText)
+  $g.DrawString($Title, $fTitle, $tBrush, 62, 19)
+  $tBrush.Dispose(); $fTitle.Dispose()
+
+  # 步骤行（带脉冲圆点）
+  $pulseR = 3.5 + [Math]::Sin($script:pulse) * 0.8
+  $dotBrush = New-Object System.Drawing.SolidBrush($clrAccent)
+  $g.FillEllipse($dotBrush, 20, 50, $pulseR * 2, $pulseR * 2)
+  $dotBrush.Dispose()
+  $fStep = New-Object System.Drawing.Font($fUI, 10)
+  $sBrush = New-Object System.Drawing.SolidBrush($clrMuted)
+  $g.DrawString($script:stepText, $fStep, $sBrush, 34, 46)
+  $sBrush.Dispose(); $fStep.Dispose()
+
+  # 进度条（细、圆角、渐变、端点光晕）
+  $px = 20; $py = 82; $pw = $W - 40; $ph = 5
+  $track = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 46, 49, 58))
+  $tPath = New-Object System.Drawing.Drawing2D.GraphicsPath
+  $tPath.AddArc($px, $py, $ph, $ph, 90, 180)
+  $tPath.AddArc($px + $pw - $ph, $py, $ph, $ph, 270, 180)
+  $tPath.CloseFigure()
+  $g.FillPath($track, $tPath); $track.Dispose(); $tPath.Dispose()
+
+  $fw = [int]([Math]::Max(0.0, [Math]::Min(1.0, $script:progCur)) * $pw)
+  if ($fw -gt 4) {
+    $fPath = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $fPath.AddArc($px, $py, $ph, $ph, 90, 180)
+    $fPath.AddArc($px + $fw - $ph, $py, $ph, $ph, 270, 180)
+    $fPath.CloseFigure()
+    $fg = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
+      (New-Object System.Drawing.Point($px, $py)),
+      (New-Object System.Drawing.Point($px + $pw, $py)),
+      $clrAccent, $clrAccent2)
+    $g.FillPath($fg, $fPath)
+    $fg.Dispose(); $fPath.Dispose()
+    $glow = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(90, 88, 150, 255))
+    $g.FillEllipse($glow, $px + $fw - 6, $py - 3, 11, 11)
+    $glow.Dispose()
   }
-  $e.Graphics.Dispose | Out-Null
 })
-$form.Controls.Add($script:progressPanel)
 
 $form.Show()
 
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 250
+$timer.Interval = 90
 $timer.Add_Tick({
   try {
     if (Test-Path $StateFile) {
       $raw = [System.IO.File]::ReadAllText($StateFile)
       if ($raw.Length -gt 0 -and [int][char]$raw[0] -eq 0xFEFF) { $raw = $raw.Substring(1) }
       $st = $raw | ConvertFrom-Json
-      $lblStep.Text = $st.step
-      $script:progressTarget = [Math]::Min(1.0, $st.done / [Math]::Max(1, $st.total))
+      if ($st.step) { $script:stepText = $st.step }
+      $script:progTarget = [Math]::Min(1.0, $st.done / [Math]::Max(1, $st.total))
       if ($st.finished) {
-        $end = [System.Diagnostics.Stopwatch]::StartNew()
-        while ($end.ElapsedMilliseconds -lt 2500) {
+        $t0 = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($t0.ElapsedMilliseconds -lt 2600) {
           [System.Windows.Forms.Application]::DoEvents()
           Start-Sleep -Milliseconds 50
         }
@@ -99,21 +140,16 @@ $timer.Add_Tick({
       }
     }
   } catch { }
-  [System.Windows.Forms.Application]::DoEvents()
+  $d = $script:progTarget - $script:progCur
+  if ([Math]::Abs($d) -gt 0.001) { $script:progCur += $d * 0.14 }
+  $script:pulse += 0.22
+  $form.Invalidate()
 })
 $timer.Start()
 
-# 30 分钟硬超时
-$hardTimeout = [System.Diagnostics.Stopwatch]::StartNew()
-# 平滑插值循环：progressCurrent 每帧向 progressTarget 缓动（10%/帧 → 约 250ms 到位），同时流动光带
-while ($hardTimeout.ElapsedMilliseconds -lt 1800000) {
+$hard = [System.Diagnostics.Stopwatch]::StartNew()
+while ($hard.ElapsedMilliseconds -lt 1800000) {
   [System.Windows.Forms.Application]::DoEvents()
-  $diff = $script:progressTarget - $script:progressCurrent
-  if ([Math]::Abs($diff) -gt 0.001) {
-    $script:progressCurrent += $diff * 0.15
-    $script:progressPanel.Invalidate()
-  }
-  $script:phase = ($script:phase + 0.03) % 1.0
   Start-Sleep -Milliseconds 40
   if ($form.IsDisposed) { break }
 }

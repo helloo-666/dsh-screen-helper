@@ -1,86 +1,105 @@
 ﻿Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -Name VN -Namespace DVN -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr CreateWindowExW(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr p, IntPtr m, IntPtr i, IntPtr prm); [DllImport("user32.dll")] public static extern bool DestroyWindow(IntPtr h); [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr h, uint key, byte a, uint f); [DllImport("user32.dll")] public static extern int SetWindowLongW(IntPtr h, int i, int v); [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr h); [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr h, IntPtr dc); [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);'
-
-# ---------- 蓝色横幅条（顶部全宽） ----------
-function Show-Banner([string]$Text, [int]$Ms = 2000) {
-  $ov = [IntPtr]::Zero
-  try {
-    $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-    $w = $wa.Width; $h = 36
-    $x = $wa.X; $y = $wa.Y
-    $ex = [uint32]0x00080000 -bor [uint32]0x00000020 -bor [uint32]0x00000080 -bor [uint32]0x08000000
-    $ov = [DVN.VN]::CreateWindowExW($ex, 'Static', 'dsbox-banner', [uint32]'0x90000000', $x, $y, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
-    if ($ov -eq [IntPtr]::Zero) { return }
-    [void][DVN.VN]::SetWindowLongW($ov, -20, [int]$ex)
-    $bmp = New-Object System.Drawing.Bitmap($w, $h)
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
-    $bg = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(240, 0, 103, 192))
-    $ft = New-Object System.Drawing.Font('Microsoft YaHei UI', 11, [System.Drawing.FontStyle]::Bold)
-    $ft2 = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
-    $cW = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
-    $cA = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200, 255, 255, 255))
-    $g.FillRectangle($bg, 0, 0, $w, $h)
-    $ts = $g.MeasureString($Text, $ft)
-    $totalW = $ts.Width + 180
-    $g.DrawString($Text, $ft, $cW, ([int](($w - $totalW)/2)), 6)
-    $g.DrawString('Esc 取消', $ft2, $cA, ([int](($w - $totalW)/2 + $ts.Width + 20)), 8)
-    $g.Dispose()
-    $hdc = [DVN.VN]::GetDC($ov); $gdc = [System.Drawing.Graphics]::FromHdc($hdc); $gdc.DrawImage($bmp, 0, 0); $gdc.Dispose()
-    [void][DVN.VN]::ReleaseDC($ov, $hdc); $bmp.Dispose()
-    [void][DVN.VN]::SetLayeredWindowAttributes($ov, 0, 250, 0x2)
-    Start-Sleep -Milliseconds $Ms
-    for ($s = 3; $s -ge 1; $s--) {
-      $a = [byte][Math]::Max(20, [int](250 * $s / 3))
-      [void][DVN.VN]::SetLayeredWindowAttributes($ov, 0, $a, 0x2)
-      Start-Sleep -Milliseconds 60
-    }
-  } catch { }
-  finally {
-    if ($ov -ne [IntPtr]::Zero) { [void][DVN.VN]::DestroyWindow($ov) }
-  }
+if (-not ('dsboxEsc' -as [type])) {
+  Add-Type -Name dsboxEsc -Namespace dsboxNative -MemberDefinition '[DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);'
 }
 
-# ---------- 黑色箭头 + 蓝色光晕光标 ----------
-function Show-CodexCursor([int]$ToX, [int]$ToY, [int]$FromX = -1, [int]$FromY = -1, [int]$Ms = 900) {
-  $ov = [IntPtr]::Zero
+# ---------- 蓝色横幅条（顶部全宽，WinForms 实现） ----------
+function Show-Banner([string]$Text, [int]$Ms = 2000) {
+  $form = $null
   try {
-    $glow = 56
-    $w = $glow * 2; $h = $glow * 2
-    $ex = [uint32]0x00080000 -bor [uint32]0x00000020 -bor [uint32]0x00000080 -bor [uint32]0x08000000
+    $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = 'dsbox-banner'
+    $form.FormBorderStyle = 'None'
+    $form.StartPosition = 'Manual'
+    $form.Location = New-Object System.Drawing.Point($wa.X, $wa.Y)
+    $form.Size = New-Object System.Drawing.Size($wa.Width, 36)
+    $form.BackColor = [System.Drawing.Color]::FromArgb(240, 0, 103, 192)
+    $form.TopMost = $true
+    $form.ShowInTaskbar = $false
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = $Text
+    $lbl.ForeColor = [System.Drawing.Color]::White
+    $lbl.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 11, [System.Drawing.FontStyle]::Bold)
+    $lbl.AutoSize = $false
+    $lbl.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+    $lbl.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $form.Controls.Add($lbl)
+
+    $form.Show()
+    [System.Windows.Forms.Application]::DoEvents()
+
+    # Esc 取消：轮询期间给用户机会中止
+    $cancelled = $false
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.ElapsedMilliseconds -lt $Ms) {
+      if ([dsboxNative.dsboxEsc]::GetAsyncKeyState(0x1B) -ne 0) { $cancelled = $true; break }
+      [System.Windows.Forms.Application]::DoEvents()
+      Start-Sleep -Milliseconds 40
+    }
+    # 淡出
+    for ($o = 100; $o -ge 0; $o -= 20) {
+      $form.Opacity = $o / 100.0
+      [System.Windows.Forms.Application]::DoEvents()
+      Start-Sleep -Milliseconds 50
+    }
+    return $cancelled
+  } catch { return $false }
+  finally { if ($form) { $form.Close(); $form.Dispose() } }
+}
+
+# ---------- AI 光标（黑色箭头 + 蓝色光晕 + 涟漪，WinForms 实现） ----------
+function Show-CodexCursor([int]$ToX, [int]$ToY, [int]$FromX = -1, [int]$FromY = -1, [int]$Ms = 900) {
+  $form = $null
+  try {
     $startX = if ($FromX -ge 0) { $FromX } else { $ToX }
     $startY = if ($FromY -ge 0) { $FromY } else { $ToY }
-    $ov = [DVN.VN]::CreateWindowExW($ex, 'Static', 'dsbox-codexcursor', [uint32]'0x90000000', $startX - $glow, $startY - $glow, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
-    if ($ov -eq [IntPtr]::Zero) { return }
-    [void][DVN.VN]::SetWindowLongW($ov, -20, [int]$ex)
-    # 蓝色光晕背景（径向渐变）
-    $bmp = New-Object System.Drawing.Bitmap($w, $h)
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $gp.AddEllipse(0, 0, $w, $h)
-    $pgb = New-Object System.Drawing.Drawing2D.PathGradientBrush($gp)
-    $pgb.CenterColor = [System.Drawing.Color]::FromArgb(120, 0, 140, 255)
-    $pgb.SurroundColors = @([System.Drawing.Color]::FromArgb(0, 0, 140, 255))
-    $g.FillEllipse($pgb, 0, 0, $w, $h)
-    # 黑色标准箭头（居中）
-    $pts = @(
-      (New-Object System.Drawing.Point(44, 30)), (New-Object System.Drawing.Point(44, 74)),
-      (New-Object System.Drawing.Point(58, 60)), (New-Object System.Drawing.Point(70, 82)),
-      (New-Object System.Drawing.Point(78, 78)), (New-Object System.Drawing.Point(66, 56)),
-      (New-Object System.Drawing.Point(84, 56))
-    )
-    $fill = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 10, 10, 10))
-    $penW = New-Object System.Drawing.Pen([System.Drawing.Color]::White, 2.5)
-    $g.FillPolygon($fill, $pts)
-    $g.DrawPolygon($penW, $pts)
-    $g.Dispose()
-    $hdc = [DVN.VN]::GetDC($ov); $gdc = [System.Drawing.Graphics]::FromHdc($hdc); $gdc.DrawImage($bmp, 0, 0); $gdc.Dispose()
-    [void][DVN.VN]::ReleaseDC($ov, $hdc); $bmp.Dispose()
-    [void][DVN.VN]::SetLayeredWindowAttributes($ov, 0, 235, 0x2)
-    # 滑动动画
+    $size = 120
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = 'dsbox-cursor'
+    $form.FormBorderStyle = 'None'
+    $form.StartPosition = 'Manual'
+    $form.Size = New-Object System.Drawing.Size($size, $size)
+    $form.BackColor = [System.Drawing.Color]::Magenta
+    $form.TransparencyKey = [System.Drawing.Color]::Magenta
+    $form.TopMost = $true
+    $form.ShowInTaskbar = $false
+    $form.Opacity = 0.95
+
+    $script:ripple = 0
+    $form.Add_Paint({
+      param($s, $e)
+      $g = $e.Graphics
+      $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+      $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
+      $gp.AddEllipse(4, 4, $size - 8, $size - 8)
+      $pgb = New-Object System.Drawing.Drawing2D.PathGradientBrush($gp)
+      $pgb.CenterColor = [System.Drawing.Color]::FromArgb(130, 0, 140, 255)
+      $pgb.SurroundColors = @([System.Drawing.Color]::FromArgb(0, 0, 140, 255))
+      $g.FillEllipse($pgb, 4, 4, $size - 8, $size - 8)
+      $pgb.Dispose(); $gp.Dispose()
+      if ($script:ripple -gt 0) {
+        $rc = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(220, 0, 140, 255), 3)
+        $rad = 12 + $script:ripple * 12
+        $g.DrawEllipse($rc, ($size/2) - $rad, ($size/2) - $rad, $rad * 2, $rad * 2)
+        $rc.Dispose()
+      }
+      $pts = @(
+        (New-Object System.Drawing.Point(48, 32)), (New-Object System.Drawing.Point(48, 76)),
+        (New-Object System.Drawing.Point(62, 62)), (New-Object System.Drawing.Point(74, 84)),
+        (New-Object System.Drawing.Point(82, 80)), (New-Object System.Drawing.Point(70, 58)),
+        (New-Object System.Drawing.Point(88, 58))
+      )
+      $fill = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 12, 12, 12))
+      $penW = New-Object System.Drawing.Pen([System.Drawing.Color]::White, 2.5)
+      $g.FillPolygon($fill, $pts)
+      $g.DrawPolygon($penW, $pts)
+      $fill.Dispose(); $penW.Dispose()
+    })
+
+    $form.Show()
     $frames = 16
     $dx = $ToX - $startX; $dy = $ToY - $startY
     for ($f = 1; $f -le $frames; $f++) {
@@ -88,34 +107,24 @@ function Show-CodexCursor([int]$ToX, [int]$ToY, [int]$FromX = -1, [int]$FromY = 
       $ease = 1 - [Math]::Pow(1 - $t, 3)
       $px = [int]($startX + $dx * $ease)
       $py = [int]($startY + $dy * $ease)
-      [void][DVN.VN]::SetWindowPos($ov, [IntPtr](-1), $px - $glow, $py - $glow, 0, 0, 0x0015)
+      $form.Location = New-Object System.Drawing.Point($px - ($size/2), $py - ($size/2))
+      [System.Windows.Forms.Application]::DoEvents()
       Start-Sleep -Milliseconds 18
     }
-    # 点击涟漪（蓝色圆圈扩散）
-    $bmp2 = New-Object System.Drawing.Bitmap(120, 120)
-    $g2 = [System.Drawing.Graphics]::FromImage($bmp2)
-    $g2.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $rc = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(220, 0, 140, 255), 3)
-    for ($rs = 1; $rs -le 5; $rs++) {
-      $g2.Clear([System.Drawing.Color]::Transparent)
-      $rad = 10 + $rs * 12
-      $g2.DrawEllipse($rc, 60 - $rad, 60 - $rad, $rad * 2, $rad * 2)
-      $hdc3 = [DVN.VN]::GetDC($ov)
-      $g3 = [System.Drawing.Graphics]::FromHdc($hdc3)
-      $g3.DrawImage($bmp2, $ToX - $glow - 60 + $glow, $ToY - $glow - 60 + $glow)
-      $g3.Dispose()
-      [void][DVN.VN]::ReleaseDC($ov, $hdc3)
-      Start-Sleep -Milliseconds 40
+    for ($r = 1; $r -le 4; $r++) {
+      $script:ripple = $r
+      $form.Invalidate()
+      [System.Windows.Forms.Application]::DoEvents()
+      Start-Sleep -Milliseconds 55
     }
-    $rc.Dispose(); $bmp2.Dispose()
-    Start-Sleep -Milliseconds ([Math]::Max(200, $Ms - 500))
-    for ($s = 4; $s -ge 1; $s--) {
-      $a = [byte][Math]::Max(15, [int](235 * $s / 4))
-      [void][DVN.VN]::SetLayeredWindowAttributes($ov, 0, $a, 0x2)
-      Start-Sleep -Milliseconds 60
+    $script:ripple = 0
+    $form.Invalidate()
+    Start-Sleep -Milliseconds ([Math]::Max(150, $Ms - 500))
+    for ($o = 95; $o -ge 0; $o -= 24) {
+      $form.Opacity = $o / 100.0
+      [System.Windows.Forms.Application]::DoEvents()
+      Start-Sleep -Milliseconds 50
     }
   } catch { }
-  finally {
-    if ($ov -ne [IntPtr]::Zero) { [void][DVN.VN]::DestroyWindow($ov) }
-  }
+  finally { if ($form) { $form.Close(); $form.Dispose() } }
 }

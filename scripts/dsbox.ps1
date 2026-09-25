@@ -270,6 +270,36 @@ function Invoke-ScreenOcr([int[]]$Region) {
   }
 }
 
+# ---------------------------------------------------------------- visual launchers
+# Hand-rolled CreateWindowExW windows silently fail in this environment (the
+# style parameter overflows PowerShell 5.1's uint conversion), so every visual
+# effect is a WinForms form launched as its own process — verified visible.
+function Resolve-VisualScript([string]$Name) {
+  if ($PSScriptRoot) {
+    $cand = Join-Path $PSScriptRoot $Name
+    if (Test-Path $cand) { return $cand }
+  }
+  foreach ($cand in @("G:\dsbox\$Name", "G:\Temp\dsbox\$Name")) {
+    if (Test-Path $cand) { return $cand }
+  }
+  return $null
+}
+function Start-Frame([int]$X, [int]$Y, [int]$W, [int]$H, [int]$Ms = 900) {
+  $s = Resolve-VisualScript 'frame.ps1'
+  if (-not $s) { return }
+  $null = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$s`" -X $X -Y $Y -W $W -H $H -Ms $Ms" -WindowStyle Hidden -PassThru
+}
+function Start-Banner([string]$Text, [int]$Ms = 2000) {
+  $s = Resolve-VisualScript 'banner.ps1'
+  if (-not $s) { return }
+  $null = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$s`" -Text `"$Text`" -Ms $Ms" -WindowStyle Hidden -PassThru
+}
+function Start-CodexCursor([int]$ToX, [int]$ToY, [int]$FromX = -1, [int]$FromY = -1, [int]$Ms = 900) {
+  $s = Resolve-VisualScript 'cursor.ps1'
+  if (-not $s) { return }
+  $null = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$s`" -ToX $ToX -ToY $ToY -FromX $FromX -FromY $FromY -Ms $Ms" -WindowStyle Hidden -PassThru
+}
+
 # ---------------------------------------------------------------- frame highlight
 
 function Show-WindowFrame([long]$Hwnd, [int[]]$Rect, [int]$Ms = 1600) {
@@ -592,11 +622,11 @@ function Cmd-MouseClick($argv) {
     FailInput "point $($point -join ',') is outside the target window rect ($($t.rect -join ',')); no input was sent"
   }
   Save-Foreground
-  Show-WindowFrame $t.handle $t.rect 1600
+  Start-Frame $t.rect[0] $t.rect[1] ($t.rect[2] - $t.rect[0]) ($t.rect[3] - $t.rect[1]) 1600
   $lastPos = Get-LastCursorPos
   $fx = if ($lastPos) { [int]$lastPos.x } else { -1 }
   $fy = if ($lastPos) { [int]$lastPos.y } else { -1 }
-  Show-CodexCursor $point[0] $point[1] $fx $fy 900
+  Start-CodexCursor $point[0] $point[1] $fx $fy 900
   Set-LastCursorPos $point[0] $point[1]
   $child = [IntPtr]$t.handle
   $wr = New-Object N+RECT
@@ -774,7 +804,7 @@ function Cmd-KeyboardWrite($argv) {
     $deepest = $child
   }
   Save-Foreground
-  Show-WindowFrame $t.handle $t.rect 1200
+  Start-Frame $t.rect[0] $t.rect[1] ($t.rect[2] - $t.rect[0]) ($t.rect[3] - $t.rect[1]) 1200
   $failed = 0
   foreach ($ch in $text.ToCharArray()) {
     $r = [IntPtr]::Zero
@@ -868,13 +898,16 @@ switch ($rest[0]) {
       $vp = $null
       $eb = $el.Current.BoundingRectangle
       # frame the input element itself so the user sees where text goes
-      Show-WindowFrame 0 @([int]$eb.X, [int]$eb.Y, [int]($eb.X+$eb.Width), [int]($eb.Y+$eb.Height)) 900
+      Start-Frame ([int]$eb.X) ([int]$eb.Y) ([int]$eb.Width) ([int]$eb.Height) 900
       $ebCx = [int]($eb.X+$eb.Width/2); $ebCy = [int]($eb.Y+$eb.Height/2)
       $lastPos2 = Get-LastCursorPos
       $fx2 = if ($lastPos2) { [int]$lastPos2.x } else { -1 }
       $fy2 = if ($lastPos2) { [int]$lastPos2.y } else { -1 }
-      Show-Banner "AI 正在使用你的电脑 · Esc 取消" 2000
-      Show-CodexCursor $ebCx $ebCy $fx2 $fy2 900
+      # Visual cue: banner + cursor are launched as independent processes
+      # (hand-rolled CreateWindowExW windows silently fail in this environment,
+      # WinForms + Start-Process is verified working).
+      Start-Banner "AI 正在使用你的电脑" 2000
+      Start-CodexCursor $ebCx $ebCy $fx2 $fy2 900
       Set-LastCursorPos $ebCx $ebCy
       # keystroke pulses: show up to 12 characters ticking above the field
       $chars = $text.ToCharArray()
@@ -1145,13 +1178,13 @@ switch ($rest[0]) {
       }
       $r = $el.Current.BoundingRectangle
       # frame the ELEMENT itself (tighter and clearer than the whole window)
-      Show-WindowFrame 0 @([int]$r.X, [int]$r.Y, [int]($r.X+$r.Width), [int]($r.Y+$r.Height)) 900
+      Start-Frame ([int]$r.X) ([int]$r.Y) ([int]$r.Width) ([int]$r.Height) 900
       $rCx = [int]($r.X+$r.Width/2); $rCy = [int]($r.Y+$r.Height/2)
       $lastPos3 = Get-LastCursorPos
       $fx3 = if ($lastPos3) { [int]$lastPos3.x } else { -1 }
       $fy3 = if ($lastPos3) { [int]$lastPos3.y } else { -1 }
-      Show-Banner "AI 正在使用你的电脑 · Esc 取消" 2000
-      Show-CodexCursor $rCx $rCy $fx3 $fy3 900
+      Start-Banner "AI 正在使用你的电脑" 2000
+      Start-CodexCursor $rCx $rCy $fx3 $fy3 900
       Set-LastCursorPos $rCx $rCy
       Save-Foreground
       $invoked = $false; $method = ''
