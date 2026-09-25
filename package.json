@@ -1,6 +1,6 @@
 {
   "name": "dsh-screen-helper",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "Screen Automation Helper bundle for DeepSeek Harness: a screen_automation tool that drives the ScreenAutomationHelper CLI (screen capture, OCR, mouse, keyboard, clipboard, UI tree, workflow orchestration) with a read/write risk tier and per-call user approval for screen-mutating actions.",
   "keywords": [
     "dsh",

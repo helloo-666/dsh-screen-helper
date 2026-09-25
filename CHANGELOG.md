@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.21
+
+- **Defense-in-depth: the background script now refuses target-less typing/keys.**
+  The plugin has refused typing without `--title`/`--hwnd` since 0.1.11, but the
+  shipped PowerShell script itself fell back to the foreground window — so a
+  direct script call (or a future code path that skips the plugin guard) could
+  have typed into whatever the user is working in. The guard now lives in the
+  script too, and the `key` branch sends to the resolved target instead of
+  `GetForegroundWindow()`.
+- **Fixed mojibake in model-visible text.** The tool description and the typing
+  guard message contained corrupted em-dashes (`閳?`) and a corrupted helper
+  name; they are restored to readable text.
+
 ## 0.1.20
 
 - **`mouse.scroll` is now background-deliverable.** Scrolling used to grab the

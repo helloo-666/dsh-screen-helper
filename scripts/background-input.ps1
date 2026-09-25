@@ -164,6 +164,13 @@ try {
     $target = [BI]::GetForegroundWindow()
   }
   if ($target -eq [IntPtr]::Zero) { throw 'could not resolve a target window' }
+  # Typing and key events without an explicit target would land in the
+  # foreground window — whatever the user is actively using. The plugin refuses
+  # this at its layer; enforce it here too so direct script use (or a future
+  # caller that skips the plugin guard) cannot type into the user's window.
+  if (($Action -eq 'type' -or $Action -eq 'key') -and $Hwnd -eq 0 -and $Title -eq '') {
+    throw 'background typing/keys need an explicit target: pass -Hwnd <handle> or -Title <window title>'
+  }
   $result.hwnd = $target.ToInt64()
   $result.hwndClass = [BI]::ClassOf($target)
 
@@ -293,8 +300,9 @@ try {
     $result.ok = $true
   }
   elseif ($Action -eq 'key') {
-    $child = [BI]::GetForegroundWindow()
-    if ($child -eq [IntPtr]::Zero) { $child = $target }
+    # Send to the resolved target (the guard above already required an explicit
+    # one) — never to the foreground window, which belongs to the user.
+    $child = $target
     $r1 = [IntPtr]::Zero
     $r2 = [IntPtr]::Zero
     $sent1 = [BI]::SendMessageTimeout($child, 0x0100, [IntPtr]$Key, [IntPtr]::Zero, [BI]::SMTO_ABORTIFHUNG, 2000, [ref]$r1)  # WM_KEYDOWN
