@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.33
+
+- **Foreground protection: `dsbox foreground restore --hwnd H`.** When a
+  background delivery (Invoke/SetValue/message click) makes the target app
+  activate itself, it steals the user's foreground — even though our input
+  never touched the cursor or keyboard. The plugin can now hand it back:
+  dsbox runs the ALT-trick + AttachThreadInput sequence as a fresh process
+  (in-process restore loses the race against the app's async activation),
+  reports `restored: true/false`, never moves the cursor. Verified end to
+  end: DSH → SetValue(设置) steals → restore → DSH. (Plugin-side auto-call
+  wiring lands next; command available now.)
+
 ## 0.1.32
 
 - **dsbox `ui tree`: export the accessibility subtree so an agent can SEE the

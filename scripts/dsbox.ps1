@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # dsbox - fast local screen automation CLI (zero dependencies)
 # WinRT OCR + GDI+ capture + Win32 messages, all built into Windows.
 # Output contract: exit 0 = success (stdout JSON); exit 2 = usage error; exit 1 = runtime error.
@@ -27,6 +27,35 @@ function FailInput($msg, [int]$code = 1) {
   # mistaken for a delivery that moved something.
   @{ ok = $false; error = $msg; cursorMoved = $false } | ConvertTo-Json -Depth 4 -Compress
   exit $code
+}
+
+$script:FgRestoreHwnd = [IntPtr]::Zero
+$script:FgRestoreThread = [uint32]0
+
+function Save-Foreground {
+  # Remember whose turn it is to be in front, BEFORE an operation that makes
+  # the target app process input (the app often activates itself in response,
+  # stealing the foreground from whatever the user was looking at).
+  $h = [N]::GetForegroundWindow()
+  $script:FgRestoreHwnd = $h
+  $script:FgRestoreThread = 0
+  if ($h -ne [IntPtr]::Zero) {
+    $procId = 0
+    $script:FgRestoreThread = [N]::GetWindowThreadProcessId($h, [ref]$procId)
+  }
+}
+
+function Restore-Foreground {
+  # In-process restore races the target app's own async activation (UWP/
+  # Chromium activate themselves hundreds of ms later and win). Instead we
+  # report the saved foreground window to the caller (the plugin, a long-lived
+  # process) which performs the restore AFTER our exit - reliably, as a fresh
+  # PowerShell process with the ALT trick.
+  if ($script:FgRestoreHwnd -ne [IntPtr]::Zero) {
+    [Console]::Error.WriteLine("dsbox-restore-hwnd: " + $script:FgRestoreHwnd.ToInt64())
+  }
+  $script:FgRestoreHwnd = [IntPtr]::Zero
+  $script:FgRestoreThread = 0
 }
 
 $script:AsTaskGeneric = $null
@@ -64,6 +93,10 @@ public static class N {
   public delegate bool EnumCb(IntPtr h, IntPtr l);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumCb cb, IntPtr l);
   [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr p, EnumCb cb, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
@@ -330,6 +363,7 @@ function Cmd-MouseClick($argv) {
   if ($point[0] -lt $t.rect[0] -or $point[0] -gt $t.rect[2] -or $point[1] -lt $t.rect[1] -or $point[1] -gt $t.rect[3]) {
     FailInput "point $($point -join ',') is outside the target window rect ($($t.rect -join ',')); no input was sent"
   }
+  Save-Foreground
   Show-WindowFrame $t.handle $t.rect 1600
   $child = [IntPtr]$t.handle
   $wr = New-Object N+RECT
@@ -346,6 +380,7 @@ function Cmd-MouseClick($argv) {
   $s1 = [N]::SendMessageTimeout($deepest, 0x0201, [IntPtr]1, $lp, [N]::SMTO_ABORTIFHUNG, 2000, [ref]$r1)
   Start-Sleep -Milliseconds 30
   $s2 = [N]::SendMessageTimeout($deepest, 0x0202, [IntPtr]0, $lp, [N]::SMTO_ABORTIFHUNG, 2000, [ref]$r2)
+  Restore-Foreground
   if (-not ($s1 -and $s2)) { Fail 'target window did not respond within 2s; no click was delivered' }
   $before = New-Object N+POINT
   [void][N]::GetCursorPos([ref]$before)
@@ -495,6 +530,7 @@ function Cmd-KeyboardWrite($argv) {
     # whole-window typing: the frame highlight tells the user where it goes
     $deepest = $child
   }
+  Save-Foreground
   Show-WindowFrame $t.handle $t.rect 1200
   $failed = 0
   foreach ($ch in $text.ToCharArray()) {
@@ -503,6 +539,7 @@ function Cmd-KeyboardWrite($argv) {
     if (-not $sent) { $failed++ }
     Start-Sleep -Milliseconds 8
   }
+  Restore-Foreground
   if ($failed -gt 0) { Fail "$failed of $($text.Length) characters were not delivered: the target window stopped responding" }
   Write-JsonOut @{
     ok = $true
@@ -586,13 +623,16 @@ switch ($rest[0]) {
         Write-JsonOut @{ ok = $true; action = 'keyboard.setvalue'; status = 'not_found' }
       }
       $vp = $null
+      Save-Foreground
       try {
         $vp = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
         $vp.SetValue($text)
       } catch {
+        Restore-Foreground
         Write-JsonOut @{ ok = $false; action = 'keyboard.setvalue'; status = 'no_value_pattern'; error = 'element does not support ValuePattern' }
       }
       Start-Sleep -Milliseconds 200
+      Restore-Foreground
       Write-JsonOut @{
         ok = $true
         action = 'keyboard.setvalue'
@@ -845,6 +885,7 @@ switch ($rest[0]) {
         Write-JsonOut @{ ok = $true; action = 'ui.invoke'; status = 'not_found' }
       }
       $r = $el.Current.BoundingRectangle
+      Save-Foreground
       $invoked = $false; $method = ''
       try {
         $pat = $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
@@ -864,8 +905,10 @@ switch ($rest[0]) {
         }
       }
       if (-not $invoked) {
+        Restore-Foreground
         Write-JsonOut @{ ok = $false; action = 'ui.invoke'; status = 'no_pattern'; error = 'element supports no invoke/toggle/select pattern' }
       }
+      Restore-Foreground
       Write-JsonOut @{
         ok = $true
         action = 'ui.invoke'
@@ -936,6 +979,48 @@ switch ($rest[0]) {
       uiaElementCount = $uiaCount
       backgroundCapable = $backgroundCapable
       diagnosis = $diagnosis
+    }
+  }
+  'foreground' {
+    if ($rest.Count -ge 2 -and $rest[1] -eq 'restore') {
+      # Called by the plugin AFTER a delivery that made the target app steal
+      # focus: a fresh process running the ALT-trick + AttachThreadInput
+      # sequence, which reliably hands the foreground back to the saved window.
+      $hwnd4 = 0L
+      for ($i = 2; $i -lt $rest.Count; $i++) {
+        if ($rest[$i] -eq '--hwnd' -and $i+1 -lt $rest.Count) { $hwnd4 = [long]$rest[$i+1]; $i++ }
+      }
+      if ($hwnd4 -le 0) { Fail 'usage: dsbox foreground restore --hwnd H' 2 }
+      $mine = [N]::GetCurrentThreadId()
+      $curFg = [N]::GetForegroundWindow()
+      $curPid = 0
+      $fgThread = [N]::GetWindowThreadProcessId($curFg, [ref]$curPid)
+      $attached = $false
+      $sr = $false
+      try {
+        [N]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        [N]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 60
+        if ($fgThread -ne 0 -and $fgThread -ne $mine) {
+          $attached = [N]::AttachThreadInput($mine, $fgThread, $true)
+        }
+        $sr = [N]::SetForegroundWindow([IntPtr]$hwnd4)
+        if (-not $sr) { [N]::SwitchToThisWindow([IntPtr]$hwnd4, $false) }
+      } catch { } finally {
+        if ($attached) { [void][N]::AttachThreadInput($mine, $fgThread, $false) }
+      }
+      Start-Sleep -Milliseconds 250
+      $now = [N]::GetForegroundWindow()
+      Write-JsonOut @{
+        ok = $true
+        action = 'foreground.restore'
+        target = $hwnd4
+        foregroundNow = $now.ToInt64()
+        restored = ($now -eq [IntPtr]$hwnd4)
+        cursorMoved = $false
+      }
+    } else {
+      Fail 'usage: dsbox foreground restore --hwnd H' 2
     }
   }
   'health' { Cmd-Health }
