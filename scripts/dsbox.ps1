@@ -12,6 +12,25 @@ $ErrorActionPreference = 'Stop'
 # ---------------------------------------------------------------- infra
 
 function Write-JsonOut($obj) {
+  # Append input deliveries to the operation history (best-effort, never fails).
+  try {
+    if ($obj.action -like 'mouse.*' -or $obj.action -like 'keyboard.*' -or $obj.action -eq 'ui.invoke') {
+      $histFile = Join-Path $env:TEMP 'dsbox-history.json'
+      $items = @()
+      $raw = ''
+      if (Test-Path $histFile) { $raw = [System.IO.File]::ReadAllText($histFile) }
+      if ($raw.Length -gt 0 -and [int][char]$raw[0] -eq 0xFEFF) { $raw = $raw.Substring(1) }
+      if ($raw.Trim().Length -gt 0) { try { $items = @($raw | ConvertFrom-Json) } catch { $items = @() } }
+      $entry = [PSCustomObject]@{
+        time = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        action = $obj.action
+        status = $obj.status
+      }
+      $items = @($items) + @($entry)
+      if ($items.Count -gt 100) { $items = @($items | Select-Object -Last 100) }
+      ConvertTo-Json -InputObject @($items) -Depth 4 -Compress | Set-Content $histFile -Encoding UTF8
+    }
+  } catch { }
   $obj | ConvertTo-Json -Depth 6 -Compress
   exit 0
 }
@@ -1305,7 +1324,6 @@ switch ($rest[0]) {
         }
         if ($history) {
           @{ step = $step; done = $done; total = $total; finished = $finished; steps = ($history | ConvertFrom-Json) } | ConvertTo-Json -Compress -Depth 4 | Set-Content $stateFile -Encoding UTF8
-          @{ step = $step; done = $done; total = $total; finished = $finished; steps = ($env:DSB_PANEL_HISTORY | ConvertFrom-Json) } | ConvertTo-Json -Compress -Depth 4 | Set-Content $stateFile -Encoding UTF8
         } else {
           @{ step = $step; done = $done; total = $total; finished = $finished } | ConvertTo-Json -Compress | Set-Content $stateFile -Encoding UTF8
         }
@@ -1320,6 +1338,29 @@ switch ($rest[0]) {
         Write-JsonOut @{ ok = $true; action = 'panel.stop' }
       }
       default { Fail "unknown panel subcommand '$($rest[1])'" 2 }
+    }
+  }
+  'history' {
+    # Operation history: every input/visual delivery appends here so the
+    # agent (and the user) can review what the AI did and when.
+    $histFile = Join-Path $env:TEMP 'dsbox-history.json'
+    $count = 20
+    for ($i = 1; $i -lt $rest.Count; $i++) {
+      if ($rest[$i] -eq '--count' -and $i+1 -lt $rest.Count) { $count = [int]$rest[$i+1]; $i++ }
+    }
+    $items = @()
+    if (Test-Path $histFile) {
+      try {
+        $raw = [System.IO.File]::ReadAllText($histFile)
+        if ($raw.Length -gt 0 -and [int][char]$raw[0] -eq 0xFEFF) { $raw = $raw.Substring(1) }
+        $items = @($raw | ConvertFrom-Json)
+      } catch { $items = @() }
+    }
+    Write-JsonOut @{
+      ok = $true
+      action = 'history'
+      count = $items.Count
+      items = @($items | Select-Object -Last $count)
     }
   }
   'health' { Cmd-Health }
