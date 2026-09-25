@@ -59,6 +59,13 @@ public class BI {
   [DllImport("user32.dll")] public static extern IntPtr RealChildWindowFromPoint(IntPtr p, POINT pt);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern IntPtr SendMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
+  // Timeout variant: SendMessageW blocks forever if the target window's message
+  // loop is hung, which would wedge the whole call. SendMessageTimeout gives up
+  // and lets us report it instead of stalling until the plugin timeout.
+  [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(
+    IntPtr h, uint m, IntPtr w, IntPtr l, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+  public const uint SMTO_ABORTIFHUNG = 0x0002;
+  public const uint SMTO_NORMAL = 0x0000;
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
   [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
   [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
@@ -216,9 +223,16 @@ try {
     $cy = $Y - $cr.T
     $lParam = [IntPtr]($cx -bor ($cy * 65536))
 
-    [void][BI]::SendMessageW($child, 0x0201, [IntPtr]1, $lParam)   # WM_LBUTTONDOWN
+    # Send with a timeout: a hung target window would block SendMessageW forever.
+    # 2000ms is plenty for a click; on timeout we report it rather than stalling.
+    $r1 = [IntPtr]::Zero
+    $r2 = [IntPtr]::Zero
+    $sent1 = [BI]::SendMessageTimeout($child, 0x0201, [IntPtr]1, $lParam, [BI]::SMTO_ABORTIFHUNG, 2000, [ref]$r1)
     Start-Sleep -Milliseconds 30
-    [void][BI]::SendMessageW($child, 0x0202, [IntPtr]0, $lParam)   # WM_LBUTTONUP
+    $sent2 = [BI]::SendMessageTimeout($child, 0x0202, [IntPtr]0, $lParam, [BI]::SMTO_ABORTIFHUNG, 2000, [ref]$r2)
+    if (-not ($sent1 -and $sent2)) {
+      throw "target window did not respond within 2s (it may be hung); no click was delivered"
+    }
     $result.ok = $true
   }
   elseif ($Action -eq 'type') {
@@ -236,18 +250,29 @@ try {
       $child = [BI]::FindEditableDescendant($target)
       if ($child -eq [IntPtr]::Zero) { $child = $target }
     }
+    $failed = 0
     foreach ($ch in $Text.ToCharArray()) {
-      [void][BI]::SendMessageW($child, 0x0102, [IntPtr][int][char]$ch, [IntPtr]::Zero)  # WM_CHAR
+      $r = [IntPtr]::Zero
+      $sent = [BI]::SendMessageTimeout($child, 0x0102, [IntPtr][int][char]$ch, [IntPtr]::Zero, [BI]::SMTO_ABORTIFHUNG, 2000, [ref]$r)  # WM_CHAR
+      if (-not $sent) { $failed++ }
       Start-Sleep -Milliseconds 10
+    }
+    if ($failed -gt 0) {
+      throw "$failed of $($Text.Length) characters were not delivered: the target window stopped responding"
     }
     $result.ok = $true
   }
   elseif ($Action -eq 'key') {
     $child = [BI]::GetForegroundWindow()
     if ($child -eq [IntPtr]::Zero) { $child = $target }
-    [void][BI]::SendMessageW($child, 0x0100, [IntPtr]$Key, [IntPtr]::Zero)  # WM_KEYDOWN
+    $r1 = [IntPtr]::Zero
+    $r2 = [IntPtr]::Zero
+    $sent1 = [BI]::SendMessageTimeout($child, 0x0100, [IntPtr]$Key, [IntPtr]::Zero, [BI]::SMTO_ABORTIFHUNG, 2000, [ref]$r1)  # WM_KEYDOWN
     Start-Sleep -Milliseconds 20
-    [void][BI]::SendMessageW($child, 0x0101, [IntPtr]$Key, [IntPtr]::Zero)  # WM_KEYUP
+    $sent2 = [BI]::SendMessageTimeout($child, 0x0101, [IntPtr]$Key, [IntPtr]::Zero, [BI]::SMTO_ABORTIFHUNG, 2000, [ref]$r2)  # WM_KEYUP
+    if (-not ($sent1 -and $sent2)) {
+      throw "target window did not respond within 2s (it may be hung); no key was delivered"
+    }
     $result.ok = $true
   }
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.18
+
+- **Background input no longer blocks forever on a hung window.** Click/type/key
+  delivery used plain `SendMessageW`, which blocks until the target's message loop
+  responds — a hung target would wedge the call until the plugin timeout. All
+  sends now use `SendMessageTimeout` with `SMTO_ABORTIFHUNG` (2s) and report a
+  clear failure (`target window did not respond ... no input was delivered`)
+  instead of stalling. Pattern borrowed from the local computer-use installer
+  reference; the difference is that this plugin still never touches the cursor
+  (that reference drives `SetCursorPos` + `mouse_event` throughout).
+
 ## 0.1.17
 
 - **New: `--input-mode real|background` overrides the configured mode for a single
