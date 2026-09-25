@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.34
+
+- **Frame highlight now covers every delivery path.** The 0.1.27/0.1.29 fast
+  paths (UIA `ui invoke` clicks, `keyboard setvalue` typing) bypassed the
+  window-frame highlight because they never went through dsbox's click/write
+  commands — so the "which window is being operated" cue silently disappeared
+  on the paths used most. Both now frame the exact ELEMENT (tighter and more
+  informative than the whole-window frame) before acting: click shows the
+  button's box, typing shows the input field's box. 900 ms fade.
+
 ## 0.1.33
 
 - **Foreground protection: `dsbox foreground restore --hwnd H`.** When a

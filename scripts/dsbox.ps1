@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 # dsbox - fast local screen automation CLI (zero dependencies)
 # WinRT OCR + GDI+ capture + Win32 messages, all built into Windows.
 # Output contract: exit 0 = success (stdout JSON); exit 2 = usage error; exit 1 = runtime error.
@@ -623,6 +623,9 @@ switch ($rest[0]) {
         Write-JsonOut @{ ok = $true; action = 'keyboard.setvalue'; status = 'not_found' }
       }
       $vp = $null
+      $eb = $el.Current.BoundingRectangle
+      # frame the input element itself so the user sees where text goes
+      Show-WindowFrame 0 @([int]$eb.X, [int]$eb.Y, [int]($eb.X+$eb.Width), [int]($eb.Y+$eb.Height)) 900
       Save-Foreground
       try {
         $vp = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
@@ -885,6 +888,8 @@ switch ($rest[0]) {
         Write-JsonOut @{ ok = $true; action = 'ui.invoke'; status = 'not_found' }
       }
       $r = $el.Current.BoundingRectangle
+      # frame the ELEMENT itself (tighter and clearer than the whole window)
+      Show-WindowFrame 0 @([int]$r.X, [int]$r.Y, [int]($r.X+$r.Width), [int]($r.Y+$r.Height)) 900
       Save-Foreground
       $invoked = $false; $method = ''
       try {
