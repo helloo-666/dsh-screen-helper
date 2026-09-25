@@ -230,8 +230,15 @@ export async function runCli(options: RunCliOptions): Promise<CliOutcome> {
     };
 
     let child;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      child = spawn(cliPath, ['cli', ...argv], {
+      // .cmd/.bat launchers cannot be spawned directly on modern Node (EINVAL,
+      // CVE-2024-27980 hardening): route them through cmd.exe with an explicit
+      // argument array — no shell string, so no injection surface either.
+      const isBatch = /\.(cmd|bat)$/i.test(cliPath);
+      const file = isBatch ? 'cmd.exe' : cliPath;
+      const args = isBatch ? ['/d', '/s', '/c', cliPath, 'cli', ...argv] : ['cli', ...argv];
+      child = spawn(file, args, {
         cwd,
         // No shell: arguments cross the boundary as a real argv array, so no
         // amount of quoting or metacharacters in a value can add a command.
@@ -262,7 +269,7 @@ export async function runCli(options: RunCliOptions): Promise<CliOutcome> {
       if (stderr.length < MAX_CAPTURE) stderr += chunk;
     });
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGKILL');
     }, timeoutMs);

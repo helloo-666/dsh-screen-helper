@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.23
+
+- **New companion CLI: dsbox** (`G:\dsbox\dsbox.cmd` + `dsbox.ps1`) — a from-scratch,
+  zero-dependency replacement for ScreenAutomationHelper's slow paths, built on
+  Windows' own WinRT OCR + GDI+. Full-screen OCR: **~1.0s vs SAH's 16–20s**
+  (roughly 15x). Region OCR ~0.7s. Supports `screen recognize` (--region),
+  `find_exact` (ranked), `window list-visible|foreground`, `mouse click`
+  (background message delivery, cursor untouched), `health`, plus a `ui find`
+  shim that reports structured not-found so the plugin's identity step falls
+  through to OCR instead of dying.
+- **Window frame highlight**: when dsbox delivers a click it first draws a bright
+  cyan rounded frame around the target window (click-through, never activates,
+  fades out ~1.6s) so the user can SEE which window is being operated. Requested
+  feature; enabled on every dsbox click.
+- **dsbox requires an explicit `--hwnd`/`--title`** for clicks — it never
+  resolves the user's foreground window (defense-in-depth by design).
+- **Fixed: plugin could not spawn .cmd helper launchers** (Node ≥20 EINVAL,
+  CVE-2024-27980 hardening). Batch `cliPath` values are now routed through
+  `cmd.exe /d /s /c` with an explicit argument array (no shell string, no
+  injection surface). Also fixed a TDZ crash (`clearTimeout(timer)` before
+  declaration) when spawn failed synchronously.
+- **Measured end-to-end**: `ui.click` (identity → OCR locate → background click)
+  via dsbox in **5.9s** where the SAH path took 19–25s.
+
 ## 0.1.22
 
 - **`ui.click` OCR is region-limited to the target window when `--hwnd`/`--title`
