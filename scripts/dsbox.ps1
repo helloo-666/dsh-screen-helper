@@ -294,7 +294,19 @@ function Show-WindowFrame([long]$Hwnd, [int[]]$Rect, [int]$Ms = 1600) {
   }
 }
 
-function Show-AiCursorAnimated([int]$ToX, [int]$ToY, [int]$FromX = -1, [int]$FromY = -1, [int]$Ms = 900) {
+function Get-LastCursorPos {
+  # remember the AI pointer's last resting place across invocations
+  $p = Join-Path $env:TEMP 'dsbox-cursor.json'
+  if (Test-Path $p) {
+    try { return (Get-Content $p -Raw | ConvertFrom-Json) } catch { }
+  }
+  return $null
+}
+function Set-LastCursorPos([int]$X, [int]$Y) {
+  @{ x = $X; y = $Y } | ConvertTo-Json -Compress | Set-Content (Join-Path $env:TEMP 'dsbox-cursor.json') -Encoding UTF8
+}
+
+function Show-AiCursorAnimated([int]$ToX, [int]$ToY, [int]$FromX = -1, [int]$FromY = -1, [int]$Ms = 900, [bool]$Persist = $false) {
   # Codex-style AI pointer: glides from the last operation point to the new
   # target, shows a click ripple, then fades. The physical cursor never moves.
   $ov = [IntPtr]::Zero
@@ -353,10 +365,12 @@ function Show-AiCursorAnimated([int]$ToX, [int]$ToY, [int]$FromX = -1, [int]$Fro
     }
     $rc.Dispose(); $bmp2.Dispose()
     Start-Sleep -Milliseconds ([Math]::Max(150, $Ms - 500))
-    for ($s = 4; $s -ge 1; $s--) {
-      $alpha = [byte][Math]::Max(15, [int](235 * $s / 4))
-      [void][N]::SetLayeredWindowAttributes($ov, 0, $alpha, 0x2)
-      Start-Sleep -Milliseconds 60
+    if (-not $Persist) {
+      for ($s = 4; $s -ge 1; $s--) {
+        $alpha = [byte][Math]::Max(15, [int](235 * $s / 4))
+        [void][N]::SetLayeredWindowAttributes($ov, 0, $alpha, 0x2)
+        Start-Sleep -Milliseconds 60
+      }
     }
   } catch { }
   finally {
@@ -437,7 +451,11 @@ function Cmd-MouseClick($argv) {
   }
   Save-Foreground
   Show-WindowFrame $t.handle $t.rect 1600
-  Show-AiCursorAnimated $point[0] $point[1] -1 -1 700
+  $lastPos = Get-LastCursorPos
+  $fx = if ($lastPos) { [int]$lastPos.x } else { -1 }
+  $fy = if ($lastPos) { [int]$lastPos.y } else { -1 }
+  Show-AiCursorAnimated $point[0] $point[1] $fx $fy 700 $true
+  Set-LastCursorPos $point[0] $point[1]
   $child = [IntPtr]$t.handle
   $wr = New-Object N+RECT
   [void][N]::GetWindowRect($child, [ref]$wr)
@@ -699,7 +717,12 @@ switch ($rest[0]) {
       $eb = $el.Current.BoundingRectangle
       # frame the input element itself so the user sees where text goes
       Show-WindowFrame 0 @([int]$eb.X, [int]$eb.Y, [int]($eb.X+$eb.Width), [int]($eb.Y+$eb.Height)) 900
-      Show-AiCursorAnimated ([int]($eb.X+$eb.Width/2)) ([int]($eb.Y+$eb.Height/2)) -1 -1 700
+      $ebCx = [int]($eb.X+$eb.Width/2); $ebCy = [int]($eb.Y+$eb.Height/2)
+      $lastPos2 = Get-LastCursorPos
+      $fx2 = if ($lastPos2) { [int]$lastPos2.x } else { -1 }
+      $fy2 = if ($lastPos2) { [int]$lastPos2.y } else { -1 }
+      Show-AiCursorAnimated $ebCx $ebCy $fx2 $fy2 700 $true
+      Set-LastCursorPos $ebCx $ebCy
       Save-Foreground
       try {
         $vp = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
@@ -964,7 +987,12 @@ switch ($rest[0]) {
       $r = $el.Current.BoundingRectangle
       # frame the ELEMENT itself (tighter and clearer than the whole window)
       Show-WindowFrame 0 @([int]$r.X, [int]$r.Y, [int]($r.X+$r.Width), [int]($r.Y+$r.Height)) 900
-      Show-AiCursorAnimated ([int]($r.X+$r.Width/2)) ([int]($r.Y+$r.Height/2)) -1 -1 700
+      $rCx = [int]($r.X+$r.Width/2); $rCy = [int]($r.Y+$r.Height/2)
+      $lastPos3 = Get-LastCursorPos
+      $fx3 = if ($lastPos3) { [int]$lastPos3.x } else { -1 }
+      $fy3 = if ($lastPos3) { [int]$lastPos3.y } else { -1 }
+      Show-AiCursorAnimated $rCx $rCy $fx3 $fy3 700 $true
+      Set-LastCursorPos $rCx $rCy
       Save-Foreground
       $invoked = $false; $method = ''
       try {

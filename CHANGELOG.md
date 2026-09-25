@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.38
+
+- **Codex-style persistent AI cursor**: the orange pointer now **stays where
+  it last acted** (persists until the next operation moves it) and each new
+  operation **glides from that resting place** — consecutive operations read
+  as one continuous cursor journey across the screen, exactly like a
+  remote-operator feed. Position survives across invocations via a state
+  file in %TEMP%.
+- Verified: three consecutive Settings navigations glide Bluetooth → System →
+  Personalisation in one continuous journey.
+
 ## 0.1.37
 
 - **Codex-style animated AI pointer**: the orange arrow now **glides** from
