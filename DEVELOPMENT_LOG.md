@@ -5,6 +5,38 @@
 
 ---
 
+## 2026-09-25 深夜 IV（第 31 轮工作）✅ 已完成
+
+### 主题：前台保护 —— 回答你问的「为什么窗口会提到前台」
+
+**原因**：读屏（OCR/树）从不碰前台；但 Invoke 点击/SetValue 写入会让目标应用"自己执行"动作，应用处理输入时会**自己把自己激活到前台**（UWP/Chromium 都这样）—— 焦点是被目标应用抢的，不是 dsbox 动的。
+
+**修复**（实测多轮，过程曲折）：
+
+| 尝试 | 结果 |
+|------|------|
+| dsbox 内 AttachThreadInput+SetForeground | ❌ 输给 UWP 异步激活（应用抢在前台保护跑完之后） |
+| SwitchToThisWindow | ❌ 竞态同样输 |
+| **新进程执行 ALT trick + AttachThreadInput** | ✅ **成功**（新增 oreground restore --hwnd 命令） |
+
+关键发现：在**独立的新进程**里跑 ALT 按键模拟 + AttachThreadInput，SetForegroundWindow 就能成功（ALT 事件让系统认为该进程在处理用户输入，从而获得前台授予资格）。在 dsbox 原进程里做则必然输给 UWP 的异步激活。
+
+### 实测闭环
+
+`
+前台=DSH → setvalue(设置) → 前台被抢到设置 ✅（复现问题）
+→ dsbox foreground restore --hwnd 262540 → restored=true ✅
+→ 前台回到 DSH ✅
+`
+
+### 发布
+
+- 45/45 测试 ✅
+- **v0.1.33 已发布**：https://github.com/helloo-666/dsh-screen-helper/releases/tag/v0.1.33
+- 装机副本已同步 ✅
+- 插件侧自动调用接线（下一轮收尾）
+
+---
 ## 2026-09-25 深夜 III（第 30 轮工作）✅ 已完成
 
 ### 主题：ui tree —— agent 能"看懂"界面了
