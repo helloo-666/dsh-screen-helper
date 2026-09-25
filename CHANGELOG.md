@@ -1,4 +1,13 @@
-# Changelog
+﻿# Changelog
+
+## 0.1.39
+
+- **Keystroke pulse visualisation**: while keyboard setvalue writes, a dark
+  badge ticks through the written characters (up to 12, 45ms each) right above
+  the input field — the Codex-style "typing" cue. Field frame + AI pointer
+  show first, then characters tick, then the write lands.
+- Settings search-box demo verified end to end (write "hello 世界 123" →
+  read back → clear → page restored).
 
 ## 0.1.38
 

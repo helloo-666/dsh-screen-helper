@@ -306,6 +306,36 @@ function Set-LastCursorPos([int]$X, [int]$Y) {
   @{ x = $X; y = $Y } | ConvertTo-Json -Compress | Set-Content (Join-Path $env:TEMP 'dsbox-cursor.json') -Encoding UTF8
 }
 
+function Show-TypeBadge([string]$Char, [int]$X, [int]$Y) {
+  # one keystroke pulse above the field while setvalue writes
+  $ov = [IntPtr]::Zero
+  try {
+    Add-Type -AssemblyName System.Drawing
+    $w = 34; $h = 34
+    $ex = [uint32]0x00080000 -bor [uint32]0x00000020 -bor [uint32]0x00000080 -bor [uint32]0x08000000
+    $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-type', [uint32]'0x90000000', $X - 17, $Y - 46, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
+    if ($ov -eq [IntPtr]::Zero) { return }
+    [void][N]::SetWindowLongW($ov, -20, [int]$ex)
+    $bmp = New-Object System.Drawing.Bitmap($w, $h)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $bg = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(230, 30, 30, 30))
+    $ft = New-Object System.Drawing.Font('Consolas', 14, [System.Drawing.FontStyle]::Bold)
+    $ftc = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 255, 170, 40))
+    $g.FillRectangle($bg, 0, 0, $w, $h)
+    $sz = $g.MeasureString($Char, $ft)
+    $g.DrawString($Char, $ft, $ftc, ($w - $sz.Width)/2, ($h - $sz.Height)/2)
+    $g.Dispose()
+    $hdc = [N]::GetDC($ov); $gdc = [System.Drawing.Graphics]::FromHdc($hdc); $gdc.DrawImage($bmp, 0, 0); $gdc.Dispose()
+    [void][N]::ReleaseDC($ov, $hdc); $bmp.Dispose()
+    [void][N]::SetLayeredWindowAttributes($ov, 0, 230, 0x2)
+    Start-Sleep -Milliseconds 45
+  } catch { }
+  finally {
+    if ($ov -ne [IntPtr]::Zero) { [void][N]::DestroyWindow($ov) }
+  }
+}
+
 function Show-AiCursorAnimated([int]$ToX, [int]$ToY, [int]$FromX = -1, [int]$FromY = -1, [int]$Ms = 900, [bool]$Persist = $false) {
   # Codex-style AI pointer: glides from the last operation point to the new
   # target, shows a click ripple, then fades. The physical cursor never moves.
@@ -723,6 +753,12 @@ switch ($rest[0]) {
       $fy2 = if ($lastPos2) { [int]$lastPos2.y } else { -1 }
       Show-AiCursorAnimated $ebCx $ebCy $fx2 $fy2 700 $true
       Set-LastCursorPos $ebCx $ebCy
+      # keystroke pulses: show up to 12 characters ticking above the field
+      $chars = $text.ToCharArray()
+      $shown = [Math]::Min(12, $chars.Count)
+      for ($ci = 0; $ci -lt $shown; $ci++) {
+        Show-TypeBadge ([string]$chars[$ci]) $ebCx ($eb.Y)
+      }
       Save-Foreground
       try {
         $vp = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
