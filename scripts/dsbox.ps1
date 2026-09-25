@@ -1283,15 +1283,20 @@ switch ($rest[0]) {
         Write-JsonOut @{ ok = $true; action = 'panel.start'; title = $title }
       }
       'update' {
-        $step = ''; $done = 0; $total = 0; $finished = $false
+        $step = ''; $done = 0; $total = 0; $finished = $false; $history = ''
         for ($i = 2; $i -lt $rest.Count; $i++) {
           if ($rest[$i] -eq '--step' -and $i+1 -lt $rest.Count) { $step = $rest[$i+1]; $i++ }
           elseif ($rest[$i] -eq '--done' -and $i+1 -lt $rest.Count) { $done = [int]$rest[$i+1]; $i++ }
           elseif ($rest[$i] -eq '--total' -and $i+1 -lt $rest.Count) { $total = [int]$rest[$i+1]; $i++ }
           elseif ($rest[$i] -eq '--finish') { $finished = $true }
+          elseif ($rest[$i] -eq '--history' -and $i+1 -lt $rest.Count) { $history = $rest[$i+1]; $i++ }
         }
-        if (-not $step) { Fail 'usage: dsbox panel update --step S [--done N --total M] [--finish]' 2 }
-        @{ step = $step; done = $done; total = $total; finished = $finished } | ConvertTo-Json -Compress | Set-Content $stateFile -Encoding UTF8
+        if ($history) {
+          @{ step = $step; done = $done; total = $total; finished = $finished; steps = ($history | ConvertFrom-Json) } | ConvertTo-Json -Compress -Depth 4 | Set-Content $stateFile -Encoding UTF8
+          @{ step = $step; done = $done; total = $total; finished = $finished; steps = ($env:DSB_PANEL_HISTORY | ConvertFrom-Json) } | ConvertTo-Json -Compress -Depth 4 | Set-Content $stateFile -Encoding UTF8
+        } else {
+          @{ step = $step; done = $done; total = $total; finished = $finished } | ConvertTo-Json -Compress | Set-Content $stateFile -Encoding UTF8
+        }
         Write-JsonOut @{ ok = $true; action = 'panel.update'; step = $step; finished = $finished }
       }
       'stop' {

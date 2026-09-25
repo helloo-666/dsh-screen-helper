@@ -1,4 +1,4 @@
-﻿/**
+/**
  * dsh-screen-helper — a DeepSeek Harness bundle that drives the
  * ScreenAutomationHelper CLI (屏幕自动化小助手) from the model.
  *
@@ -900,6 +900,17 @@ async function runUiClick(params: {
       }
       // invoke failed (no pattern / not found) — fall through to message click
     }
+    // Save the foreground BEFORE delivery: the target app may activate itself
+    // in response (async, ~600ms later) and steal it.
+    const preFg = await runCli({
+      cliPath: enginePath,
+      invocation: { path: ['window', 'foreground'], args: [] },
+      timeoutMs: params.config.timeoutMs,
+      signal: params.exec.signal,
+    })
+    const preFgJson = preFg.ok ? (preFg.json as Record<string, unknown> | undefined) : undefined
+    const preFgHandle = preFgJson?.handle
+    const savedFgHwnd = typeof preFgHandle === 'number' ? preFgHandle : undefined
     const bgClick = await runBackgroundInput({
       action: 'click',
       x: center[0],
@@ -1054,22 +1065,15 @@ async function runUiClick(params: {
       }
     }
 
-    // Foreground protection: the target app may have activated itself in
-    // response to our input; hand the foreground back to the saved window.
-    const preFg = await runCli({
-      cliPath: enginePath,
-      invocation: { path: ['window', 'foreground'], args: [] },
-      timeoutMs: params.config.timeoutMs,
-      signal: params.exec.signal,
-    })
-    const preFgHwnd = (preFg.ok ? (preFg.json as Record<string, unknown> | undefined)?.handle : undefined)
-    const fgRestored = await autoForegroundRestore(typeof preFgHwnd === 'number' ? preFgHwnd : undefined)
+    // Foreground protection: hand the foreground back to the window that was
+    // in front BEFORE the click, if the target app stole it.
+    const fgRestored = await autoForegroundRestore(savedFgHwnd)
     return {
       action: params.action, tier: params.tier, executed: true,
       blockedReason: null, exitCode: 0,
       data: {
         step: 'clicked', ...baseBg, ...bgClick, ...backgroundCaveat(bgClick), ...structNote, ...verify,
-        ...(preFgHwnd !== undefined ? { foregroundRestored: fgRestored, originalForeground: preFgHwnd } : {}),
+        ...(savedFgHwnd !== undefined ? { foregroundRestored: fgRestored, originalForeground: savedFgHwnd } : {}),
       } as unknown as JsonValue,
       text: null, stderr: null,
     }
@@ -1507,6 +1511,17 @@ async function runBackground(params: {
   // cursor, works where WM_CHAR is ignored. Falls back to WM_CHAR typing when
   // the window has no settable edit element.
   if (p.kind === 'type' && resolveDsboxPath() !== null) {
+    // Save the foreground BEFORE the write: some apps activate themselves
+    // asynchronously after receiving text.
+    const preFgSv = await runCli({
+      cliPath: resolveDsboxPath()!,
+      invocation: { path: ['window', 'foreground'], args: [] },
+      timeoutMs: params.config.timeoutMs,
+      signal: params.exec.signal,
+    })
+    const preFgSvJson = preFgSv.ok ? (preFgSv.json as Record<string, unknown> | undefined) : undefined
+    const preFgSvHandle = preFgSvJson?.handle
+    const savedFgSvHwnd = typeof preFgSvHandle === 'number' ? preFgSvHandle : undefined
     const sv = await runCli({
       cliPath: resolveDsboxPath()!,
       invocation: {
@@ -1522,15 +1537,7 @@ async function runBackground(params: {
     })
     const svJson = sv.ok ? (sv.json as Record<string, unknown> | undefined) : undefined
     if (svJson?.status === 'set') {
-      // Foreground protection: writing text makes some apps activate themselves.
-      const preFgSv = await runCli({
-        cliPath: resolveDsboxPath()!,
-        invocation: { path: ['window', 'foreground'], args: [] },
-        timeoutMs: params.config.timeoutMs,
-        signal: params.exec.signal,
-      })
-      const preFgSvHwnd = (preFgSv.ok ? (preFgSv.json as Record<string, unknown> | undefined)?.handle : undefined)
-      const fgRestoredSv = await autoForegroundRestore(typeof preFgSvHwnd === 'number' ? preFgSvHwnd : undefined)
+      const fgRestoredSv = await autoForegroundRestore(savedFgSvHwnd)
       return {
         action: params.action,
         tier: params.tier,
@@ -1543,7 +1550,7 @@ async function runBackground(params: {
           element: svJson.element,
           valueAfter: svJson.valueAfter,
           cursorMoved: false,
-          ...(preFgSvHwnd !== undefined ? { foregroundRestored: fgRestoredSv, originalForeground: preFgSvHwnd } : {}),
+          ...(savedFgSvHwnd !== undefined ? { foregroundRestored: fgRestoredSv, originalForeground: savedFgSvHwnd } : {}),
         } as unknown as JsonValue,
         text: null,
         stderr: null,

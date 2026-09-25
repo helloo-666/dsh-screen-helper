@@ -1,5 +1,13 @@
 ﻿# Changelog
 
+## 0.1.46
+
+- **Fixed: foreground protection timing.** The pre-delivery foreground
+  snapshot was taken AFTER the delivery (race lost to the app's async
+  activation), so restore never fired. Now: snapshot before delivery →
+  deliver → wait 600ms for the steal → compare → restore. Verified live:
+  setvalue write steals focus → foregroundRestored=true → user's original
+  window back on top.
 ## 0.1.45
 
 - **Panel summary card**: when the panel auto-closes after 6s idle, it now

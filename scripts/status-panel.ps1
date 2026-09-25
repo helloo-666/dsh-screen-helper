@@ -48,7 +48,7 @@ function Render-Summary([string]$Text) {
   [void][DPN.PN]::ReleaseDC($ov, $hdc)
 }
 
-function Render([string]$step, [int]$done, [int]$total, [bool]$finished) {
+function Render([string]$step, [int]$done, [int]$total, [bool]$finished, $stepList = $null) {
   $bmp = New-Object System.Drawing.Bitmap($w, $h)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
@@ -65,8 +65,23 @@ function Render([string]$step, [int]$done, [int]$total, [bool]$finished) {
   $progress = if ($total -gt 0) { "$done/$total" } else { '' }
   $g.DrawString($progress, $ftTitle, $cMuted, $w - 60, 8)
   $dotBrush = New-Object System.Drawing.SolidBrush($(if ($finished) { [System.Drawing.Color]::FromArgb(255, 80, 220, 120) } else { $accent }))
-  $g.FillEllipse($dotBrush, 14, 40, 10, 10)
-  $g.DrawString($step, $ftStep, $cWhite, 34, 36)
+  if ($stepList) {
+    # list mode: each step with a state marker, done=✓ active=● pending=○
+    $ly = 36
+    foreach ($s in $stepList) {
+      $marker = if ($s.state -eq 'done') { '✓' } elseif ($s.state -eq 'active') { '●' } else { '○' }
+      $mColor = if ($s.state -eq 'done') { [System.Drawing.Color]::FromArgb(255, 80, 220, 120) } elseif ($s.state -eq 'active') { $accent } else { $muted }
+      $mBrush = New-Object System.Drawing.SolidBrush($mColor)
+      $tBrush = if ($s.state -eq 'pending') { $cMuted } else { $cWhite }
+      $g.DrawString($marker, $ftStep, $mBrush, 12, $ly)
+      $g.DrawString($s.text, $ftStep, $tBrush, 32, $ly)
+      $mBrush.Dispose(); $tBrush.Dispose()
+      $ly += 20
+    }
+  } else {
+    $g.FillEllipse($dotBrush, 14, 40, 10, 10)
+    $g.DrawString($step, $ftStep, $cWhite, 34, 36)
+  }
   $barBrush = New-Object System.Drawing.SolidBrush($accent)
   $barBg = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 50, 50, 56))
   $g.FillRectangle($barBg, 12, 68, $w - 24, 5)
@@ -95,7 +110,7 @@ while ((Get-Date) -lt $deadline) {
     try {
       $st = Get-Content $StateFile -Raw | ConvertFrom-Json
       if ($st.stop) { break }
-      Render $st.step $st.done $st.total $([bool]$st.finished)
+      Render $st.step $st.done $st.total $([bool]$st.finished) $st.steps
       if ($st.summary) {
         Render-Summary $st.summary
         Start-Sleep -Milliseconds 3000
