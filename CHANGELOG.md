@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.27
+
+- **"AI 自己的鼠标"来了：UIA InvokePattern delivery.** New `dsbox ui invoke
+  --name N [--hwnd H]` invokes an element through the app's own accessibility
+  channel (InvokePattern → TogglePattern → SelectionItem fallback chain). No
+  cursor movement, no synthetic window messages — and unlike SendMessage, it
+  WORKS on UWP/self-drawn apps: calculator end-to-end (加→五→等于 → display
+  "10", then 七 → "7") with the physical cursor untouched the whole time.
+- `ui.click` (background mode) now uses it automatically: when the located
+  target is a UIA element, delivery goes `uia-invoke` first and only falls
+  back to the message click when the element exposes no invocable pattern.
+  Result is tagged `deliveryMethod: 'uia-invoke'` so callers can tell them
+  apart. Measured e2e: 2.9s.
+- Fixed `ui find` role names leaking the `ControlType.` prefix in output.
+- Internals: the `ui` dispatch branch was rebuilt cleanly (find / inspect /
+  invoke / tree) after repeated incremental patches left broken if/else
+  structure and duplicate cases.
+
 ## 0.1.26
 
 - **dsbox `ui inspect --point`**: which UIA element sits at a screen point —

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * dsh-screen-helper — a DeepSeek Harness bundle that drives the
  * ScreenAutomationHelper CLI (屏幕自动化小助手) from the model.
  *
@@ -856,14 +856,11 @@ async function runUiClick(params: {
   // default. Routing only `mouse.click` would leave the primary path still
   // grabbing the cursor. Same message-based delivery, cursor untouched.
   if (params.config.inputMode === 'background') {
-    const bgClick = await runBackgroundInput({
-      action: 'click',
-      x: center[0],
-      y: center[1],
-      title: flagValue(argv, '--title'),
-      hwnd: numericFlag(argv, '--hwnd'),
-      timeoutMs: params.config.timeoutMs,
-    })
+    // dsbox UIA-invoke fast path: when the located target is a real UIA element
+    // that supports InvokePattern, the app clicks ITSELF through the
+    // accessibility channel —no cursor movement AND no window messages, so it
+    // also works on UWP/self-drawn apps where SendMessage is ignored.
+
     const baseBg = {
       uiStatus: status,
       uiCount: count,
@@ -876,6 +873,41 @@ async function runUiClick(params: {
       ...(scopeRect ? { scopedToRect: scopeRect, scopedOut } : {}),
       ...(ocrAmbiguous ? { ocrAmbiguous: true, ocrMatchCount, ocrAlternatives } : {}),
     } as Record<string, unknown>
+    if (dsboxActive && uiaLocated && uiaTarget?.name) {
+      const inv = await runCli({
+        cliPath: enginePath,
+        invocation: {
+          path: ['ui', 'invoke'],
+          args: ['--name', uiaTarget.name, ...(numericFlag(argv, '--hwnd') !== undefined ? ['--hwnd', String(numericFlag(argv, '--hwnd'))] : [])],
+        },
+        timeoutMs: params.config.timeoutMs,
+        signal: params.exec.signal,
+      })
+      const invJson = inv.ok ? (inv.json as Record<string, unknown> | undefined) : undefined
+      if (invJson?.status === 'invoked') {
+        return {
+          action: params.action, tier: params.tier, executed: true,
+          blockedReason: null, exitCode: 0,
+          data: {
+            step: 'clicked',
+            ...baseBg,
+            deliveryMethod: 'uia-invoke',
+            invokedElement: invJson.element,
+            backgroundCaveat: null,
+          } as unknown as JsonValue,
+          text: null, stderr: null,
+        }
+      }
+      // invoke failed (no pattern / not found) — fall through to message click
+    }
+    const bgClick = await runBackgroundInput({
+      action: 'click',
+      x: center[0],
+      y: center[1],
+      title: flagValue(argv, '--title'),
+      hwnd: numericFlag(argv, '--hwnd'),
+      timeoutMs: params.config.timeoutMs,
+    })
     if (!bgClick) {
       return {
         action: params.action, tier: params.tier, executed: false,

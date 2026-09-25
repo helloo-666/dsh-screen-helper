@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # dsbox - fast local screen automation CLI (zero dependencies)
 # WinRT OCR + GDI+ capture + Win32 messages, all built into Windows.
 # Output contract: exit 0 = success (stdout JSON); exit 2 = usage error; exit 1 = runtime error.
@@ -644,8 +644,72 @@ switch ($rest[0]) {
       }
     } elseif ($rest.Count -ge 2 -and $rest[1] -eq 'tree') {
       Fail 'dsbox ui tree is not implemented; use ui find' 2
+    } elseif ($rest.Count -ge 2 -and $rest[1] -eq 'invoke') {
+      $name2 = ''; $hwnd2 = 0L; $title2 = ''
+      for ($i = 2; $i -lt $rest.Count; $i++) {
+        if ($rest[$i] -eq '--name' -and $i+1 -lt $rest.Count) { $name2 = $rest[$i+1]; $i++ }
+        elseif ($rest[$i] -eq '--hwnd' -and $i+1 -lt $rest.Count) { $hwnd2 = [long]$rest[$i+1]; $i++ }
+        elseif ($rest[$i] -eq '--title' -and $i+1 -lt $rest.Count) { $title2 = $rest[$i+1]; $i++ }
+      }
+      if (-not $name2) { Fail 'usage: dsbox ui invoke --name N [--hwnd H | --title T]' 2 }
+      Add-Type -AssemblyName UIAutomationClient
+      Add-Type -AssemblyName UIAutomationTypes
+      Add-Type -AssemblyName WindowsBase
+      $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
+      $nameCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $name2)
+      $el = $null
+      if ($hwnd2 -gt 0 -or $title2) {
+        $t = Resolve-TargetWindow $title2 $hwnd2
+        $scopeEl = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$t.handle)
+        $el = $scopeEl.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $nameCond)
+      } else {
+        $winCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window)
+        $wins = $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, $winCond)
+        foreach ($w in $wins) {
+          $el = $w.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $nameCond)
+          if ($el) { break }
+        }
+      }
+      if (-not $el) {
+        Write-JsonOut @{ ok = $true; action = 'ui.invoke'; status = 'not_found' }
+      }
+      $r = $el.Current.BoundingRectangle
+      $invoked = $false; $method = ''
+      try {
+        $pat = $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        $pat.Invoke()
+        $invoked = $true; $method = 'InvokePattern'
+      } catch {
+        try {
+          $tp = $el.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+          $tp.Toggle()
+          $invoked = $true; $method = 'TogglePattern'
+        } catch {
+          try {
+            $sp = $el.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+            $sp.Select()
+            $invoked = $true; $method = 'SelectionItem'
+          } catch { }
+        }
+      }
+      if (-not $invoked) {
+        Write-JsonOut @{ ok = $false; action = 'ui.invoke'; status = 'no_pattern'; error = 'element supports no invoke/toggle/select pattern' }
+      }
+      Write-JsonOut @{
+        ok = $true
+        action = 'ui.invoke'
+        status = 'invoked'
+        method = $method
+        element = [PSCustomObject]@{
+          name = $el.Current.Name
+          role = $el.Current.ControlType.ProgrammaticName -replace '^ControlType\.'
+          cls = $el.Current.ClassName
+          box = @([int]$r.X, [int]$r.Y, [int]($r.X+$r.Width), [int]($r.Y+$r.Height))
+        }
+        cursorMoved = $false
+      }
     } else {
-      Fail 'usage: dsbox ui find --name N [--role R] | ui inspect --point x,y' 2
+      Fail 'usage: dsbox ui find --name N [--role R] | ui inspect --point x,y | ui invoke --name N' 2
     }
   }
   'probe' {
