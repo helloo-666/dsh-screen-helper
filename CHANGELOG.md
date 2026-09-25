@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.20
+
+- **`mouse.scroll` is now background-deliverable.** Scrolling used to grab the
+  physical wheel (moving is not needed, but the OS wheel event goes to whatever
+  is under the cursor — usually the user's own window). It is now delivered as
+  `WM_MOUSEWHEEL` to the child window under the target point, with the amount
+  mapped to ±120 per wheel click. The cursor never moves and the user's own
+  window does not receive the scroll. `mouse.scroll` is removed from
+  `PHYSICAL_INPUT_ACTIONS`, so results no longer carry the physical-input caveat.
+  Verified live: scroll into an explorer window hits `ShellTabWindowClass` with
+  `cursorMoved: false`.
+
 ## 0.1.19
 
 - **New opt-in `autoFallback` config.** When the target window cannot receive

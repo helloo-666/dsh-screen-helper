@@ -238,18 +238,36 @@ test('probe reports whether a window can be driven in the background', async () 
 });
 
 test('background mode flags actions that still use the physical mouse/keyboard', async () => {
-  // mouse.click and keyboard.write are message-deliverable; scrolling, dragging
-  // and hotkeys are not. Under inputMode: background the latter still grab the
-  // real input, so the result has to admit it rather than looking background-safe.
+  // mouse.click, keyboard.write and mouse.scroll are message-deliverable;
+  // dragging and hotkeys are not. Under inputMode: background the latter still
+  // grab the real input, so the result has to admit it rather than looking
+  // background-safe.
   const { ctx, registered } = makeContext();
   ctx.approval = { async request() { return 'allowed-once'; } };
   apply(ctx, Config({ inputMode: 'background', confirm: 'off', approval: 'never', cliPath: 'D:\\nope\\nope.exe' }));
   const tool = registered.get('screen_automation');
   const exec = { signal: new AbortController().signal, agent: undefined, callId: 'bg-phys' };
-  const v = await tool.execute({ action: 'mouse.scroll', args: ['--point', '10,10', '--amount', '1'] }, exec);
+  const v = await tool.execute({ action: 'mouse.drag', args: ['--point', '10,10'] }, exec);
   assert.equal(v.data.usedPhysicalInput, true);
-  assert.match(v.data.caveat, /mouse\.scroll/);
+  assert.match(v.data.caveat, /mouse\.drag/);
   assert.match(v.data.caveat, /moved the physical/);
+});
+
+test('mouse.scroll is delivered as a background window message', async () => {
+  // WM_MOUSEWHEEL can be posted to the child under the point, so scrolling no
+  // longer needs the physical wheel (or the cursor).
+  const { ctx, registered } = makeContext();
+  ctx.approval = { async request() { return 'allowed-once'; } };
+  apply(ctx, Config({ inputMode: 'background', confirm: 'off', approval: 'never', cliPath: 'D:\\nope\\nope.exe' }));
+  const tool = registered.get('screen_automation');
+  const exec = { signal: new AbortController().signal, agent: undefined, callId: 'bg-scroll' };
+  const v = await tool.execute(
+    { action: 'mouse.scroll', args: ['--point', '300,900', '--amount', '1', '--hwnd', '66024'] },
+    exec,
+  );
+  assert.equal(v.data.inputMode, 'background');
+  assert.equal(v.data.usedPhysicalInput, undefined);
+  assert.equal(v.data.cursorMoved, false);
 });
 
 test('background typing refuses to target the foreground window implicitly', async () => {

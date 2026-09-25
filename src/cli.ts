@@ -435,11 +435,12 @@ export async function resolveForegroundApp(
  * Returns null when the script cannot be located or produces no JSON.
  */
 export async function runBackgroundInput(params: {
-  action: 'click' | 'type' | 'key' | 'probe'
+  action: 'click' | 'type' | 'key' | 'probe' | 'scroll'
   x?: number
   y?: number
   text?: string
   key?: number
+  amount?: number
   title?: string
   hwnd?: number
   timeoutMs: number
@@ -461,6 +462,7 @@ export async function runBackgroundInput(params: {
   }
   if (params.text !== undefined) argv.push('-Text', params.text)
   if (params.key !== undefined) argv.push('-Key', String(params.key))
+  if (params.amount !== undefined) argv.push('-Amount', String(params.amount))
   if (params.title !== undefined) argv.push('-Title', params.title)
   if (params.hwnd !== undefined) argv.push('-Hwnd', String(params.hwnd))
 

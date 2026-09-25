@@ -33,11 +33,12 @@
   Explicit target window handle; overrides -Title.
 #>
 param(
-  [Parameter(Mandatory = $true)][ValidateSet('click', 'type', 'key', 'probe')][string]$Action,
+  [Parameter(Mandatory = $true)][ValidateSet('click', 'type', 'key', 'probe', 'scroll')][string]$Action,
   [int]$X = 0,
   [int]$Y = 0,
   [string]$Text = '',
   [int]$Key = 0,
+  [int]$Amount = 0,
   [string]$Title = '',
   [int]$Hwnd = 0
 )
@@ -232,6 +233,35 @@ try {
     $sent2 = [BI]::SendMessageTimeout($child, 0x0202, [IntPtr]0, $lParam, [BI]::SMTO_ABORTIFHUNG, 2000, [ref]$r2)
     if (-not ($sent1 -and $sent2)) {
       throw "target window did not respond within 2s (it may be hung); no click was delivered"
+    }
+    $result.ok = $true
+  }
+  elseif ($Action -eq 'scroll') {
+    # WM_MOUSEWHEEL delivered straight to the child under the point: the wheel
+    # scrolls whatever is under the cursor without the cursor ever moving.
+    # wParam high word = delta (+120 per click up, negative down), low word must
+    # carry MK_VirtualDesk-less plain state; lParam = screen coords of the point.
+    if ($X -ne 0 -or $Y -ne 0) {
+      $wr = New-Object BI+RECT
+      [void][BI]::GetWindowRect($target, [ref]$wr)
+      $winPt = New-Point ($X - $wr.L) ($Y - $wr.T)
+      $child = [BI]::RealChildWindowFromPoint($target, $winPt)
+      if ($child -eq [IntPtr]::Zero) { $child = $target }
+    } else {
+      $child = $target
+    }
+    $cr = New-Object BI+RECT
+    [void][BI]::GetWindowRect($target, [ref]$cr)
+    $sx = $X - $cr.L
+    $sy = $Y - $cr.T
+    $lParam = [IntPtr]($sx -bor ($sy * 65536))
+    $delta = $Amount * 120
+    # wParam: high-order word = wheel delta, low-order word = key flags (0).
+    $wParam = [IntPtr][int](($delta -shl 16) -bor 0)
+    $r = [IntPtr]::Zero
+    $sent = [BI]::SendMessageTimeout($child, 0x020A, $wParam, $lParam, [BI]::SMTO_ABORTIFHUNG, 2000, [ref]$r)  # WM_MOUSEWHEEL
+    if (-not $sent) {
+      throw "target window did not respond within 2s (it may be hung); no scroll was delivered"
     }
     $result.ok = $true
   }
