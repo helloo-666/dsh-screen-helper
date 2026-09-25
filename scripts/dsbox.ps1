@@ -333,20 +333,26 @@ function Show-ScrollCue([int]$Cx, [int]$Cy, [int]$Amount) {
   }
 }
 
-function Show-StatusBadge([string]$Text, [int]$Ms = 900) {
+function Show-StatusBadge([string]$Text, [int]$Ms = 1800, [int]$AnchorX = -1, [int]$AnchorY = -1) {
   # small dark pill at the top centre of the primary screen: what the AI is
   # doing right now (e.g. "AI clicking [返回]"). Fades after $Ms.
   $ov = [IntPtr]::Zero
   try {
     Add-Type -AssemblyName System.Drawing
     Add-Type -AssemblyName System.Windows.Forms
-    $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
     $font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10, [System.Drawing.FontStyle]::Bold)
     $sizeG = [System.Drawing.Graphics]::FromImage((New-Object System.Drawing.Bitmap(10, 10)))
     $ts = $sizeG.MeasureString($Text, $font)
     $sizeG.Dispose()
     $w = [int]($ts.Width + 28); $h = [int]($ts.Height + 14)
-    $x = [int](($wa.Width - $w) / 2); $y = $wa.Y + 8
+    if ($AnchorX -ge 0 -and $AnchorY -ge 0) {
+      # near the operation point, above it, clamped to the screen
+      $x = [Math]::Max(4, [Math]::Min($AnchorX - [int]($w / 2), 1920 - $w - 4))
+      $y = [Math]::Max(4, $AnchorY - $h - 46)
+    } else {
+      $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+      $x = [int](($wa.Width - $w) / 2); $y = $wa.Y + 8
+    }
     $ex = [uint32]0x00080000 -bor [uint32]0x00000020 -bor [uint32]0x00000080 -bor [uint32]0x08000000
     $ov = [N]::CreateWindowExW($ex, 'Static', 'dsbox-status', [uint32]'0x90000000', $x, $y, $w, $h, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)
     if ($ov -eq [IntPtr]::Zero) { return }
@@ -836,7 +842,7 @@ switch ($rest[0]) {
       $lastPos2 = Get-LastCursorPos
       $fx2 = if ($lastPos2) { [int]$lastPos2.x } else { -1 }
       $fy2 = if ($lastPos2) { [int]$lastPos2.y } else { -1 }
-      Show-StatusBadge "AI 正在输入（$($text.Length) 字符）" 900
+      Show-StatusBadge "AI 正在输入（$($text.Length) 字符）" 1800 $ebCx ([int]$eb.Y)
       Show-AiCursorAnimated $ebCx $ebCy $fx2 $fy2 700 $true
       Set-LastCursorPos $ebCx $ebCy
       # keystroke pulses: show up to 12 characters ticking above the field
@@ -1113,7 +1119,7 @@ switch ($rest[0]) {
       $lastPos3 = Get-LastCursorPos
       $fx3 = if ($lastPos3) { [int]$lastPos3.x } else { -1 }
       $fy3 = if ($lastPos3) { [int]$lastPos3.y } else { -1 }
-      Show-StatusBadge "AI 正在点击「$name」" 900
+      Show-StatusBadge "AI 正在点击「$name」" 1800 $rCx ([int]$r.Y)
       Show-AiCursorAnimated $rCx $rCy $fx3 $fy3 700 $true
       Set-LastCursorPos $rCx $rCy
       Save-Foreground
