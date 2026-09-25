@@ -1636,6 +1636,56 @@ function backgroundCaveat(out: Record<string, unknown>): Record<string, unknown>
  * including honoring `inputMode`. The single entry point is what keeps the
  * approval token from becoming a way around the background-input policy.
  */
+// ---- Codex-style task panel auto-management (dsbox panel commands) ----
+const panelState = { active: false, done: 0, stopTimer: null as ReturnType<typeof setTimeout> | null }
+function panelDescribe(action: string, argv: readonly string[]): string {
+  const flag = (n: string): string | undefined => {
+    const i = argv.indexOf(n)
+    return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined
+  }
+  const name = flag('--name')
+  const text = flag('--text')
+  const point = flag('--point')
+  if (action === 'ui.click') return `点击「${name ?? '目标'}」`
+  if (action === 'keyboard.write') return `输入「${(text ?? '').slice(0, 12)}」`
+  if (action === 'mouse.click') return `点击 (${point ?? '?'})`
+  if (action === 'mouse.scroll') return `滚动 ${flag('--amount') ?? ''}`
+  return action
+}
+async function panelTouch(action: string, argv: readonly string[]): Promise<void> {
+  const step = panelDescribe(action, argv)
+  try {
+    if (!panelState.active) {
+      await runCli({
+        cliPath: resolveDsboxPath() ?? 'dsbox.cmd',
+        invocation: { path: ['panel', 'start'], args: ['--title', 'DSH 自动化任务'] },
+        timeoutMs: 15_000,
+      })
+      panelState.active = true
+      panelState.done = 0
+    }
+    panelState.done += 1
+    await runCli({
+      cliPath: resolveDsboxPath() ?? 'dsbox.cmd',
+      invocation: {
+        path: ['panel', 'update'],
+        args: ['--step', step, '--done', String(panelState.done), '--total', String(panelState.done + 1)],
+      },
+      timeoutMs: 15_000,
+    })
+    if (panelState.stopTimer) clearTimeout(panelState.stopTimer)
+    panelState.stopTimer = setTimeout(() => {
+      void runCli({
+        cliPath: resolveDsboxPath() ?? 'dsbox.cmd',
+        invocation: { path: ['panel', 'stop'], args: [] },
+        timeoutMs: 15_000,
+      }).then(() => {
+        panelState.active = false
+        panelState.done = 0
+      })
+    }, 6_000)
+  } catch { }
+}
 async function dispatch(params: {
   action: string
   argv: readonly string[]
@@ -1665,6 +1715,7 @@ async function dispatch(params: {
     return runFindExact({ cliPath, argv: restArgv, config: effConfig, tier, exec, action })
   }
   if (action === 'ui.click') {
+    void panelTouch(action, restArgv)
     return runUiClick({ cliPath, argv: restArgv, config: effConfig, tier, exec, action })
   }
   if (action === 'window.app') {
@@ -1676,6 +1727,7 @@ async function dispatch(params: {
 
   const bg = backgroundPlan(action, restArgv)
   if (bg && effConfig.inputMode === 'background') {
+    void panelTouch(action, restArgv)
     return runBackground({ plan: bg, config: effConfig, tier, exec, action })
   }
 
